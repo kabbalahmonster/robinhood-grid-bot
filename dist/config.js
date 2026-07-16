@@ -120,7 +120,7 @@ exports.tokenConfig = {
     wethAddress: process.env.WETH_ADDRESS || '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
     tradingTokenAddress: process.env.TRADING_TOKEN_ADDRESS || process.env.WETH_ADDRESS || '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
     tradingTokenSymbol: process.env.TRADING_TOKEN_SYMBOL || 'WETH',
-    permit2Address: '0x000000000022D473030F116dDee9F6B43ac78BA3', // Permit2 contract on all EVM chains
+    permit2Address: '0x000000000022d473030f116ddee9f6b43ac78ba3', // Permit2 contract on all EVM chains (lowercase for viem)
 };
 /**
  * Validate configuration
