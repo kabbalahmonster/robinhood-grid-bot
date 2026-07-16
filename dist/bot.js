@@ -92,7 +92,7 @@ class GridBot {
         logger_js_1.logger.info(`   WETH:        ${wethBalance.toFixed(6)} WETH`);
         logger_js_1.logger.info(`   ${config_js_1.tokenConfig.tradingTokenSymbol}:        ${parseFloat(tokenBal.formattedBalance).toFixed(6)} tokens`);
         logger_js_1.logger.info(`📊 PRICE:       1 ${config_js_1.tokenConfig.tradingTokenSymbol} = ${price.toFixed(8)} WETH`);
-        logger_js_1.logger.info(`📈 POSITIONS:   ${filled.length}/${totalPositions} filled | ${empty.length} empty`);
+        logger_js_1.logger.info(`📈 POSITIONS:   ${filled.length} filled / ${config_js_1.botConfig.MAX_POSITIONS} max | ${empty.length} empty (created: ${totalPositions})`);
         logger_js_1.logger.info(`💵 TOTAL VALUE: ${totalValueWeth.toFixed(6)} WETH`);
         if (filled.length > 0) {
             logger_js_1.logger.info(`🎯 POSITION DETAILS:`);

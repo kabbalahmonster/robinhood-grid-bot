@@ -120,7 +120,7 @@ export class GridBot {
     logger.info(`   WETH:        ${wethBalance.toFixed(6)} WETH`);
     logger.info(`   ${tokenConfig.tradingTokenSymbol}:        ${parseFloat(tokenBal.formattedBalance).toFixed(6)} tokens`);
     logger.info(`📊 PRICE:       1 ${tokenConfig.tradingTokenSymbol} = ${price.toFixed(8)} WETH`);
-    logger.info(`📈 POSITIONS:   ${filled.length}/${totalPositions} filled | ${empty.length} empty`);
+    logger.info(`📈 POSITIONS:   ${filled.length} filled / ${botConfig.MAX_POSITIONS} max | ${empty.length} empty (created: ${totalPositions})`);
     logger.info(`💵 TOTAL VALUE: ${totalValueWeth.toFixed(6)} WETH`);
     
     if (filled.length > 0) {
