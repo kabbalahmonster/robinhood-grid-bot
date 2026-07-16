@@ -60,12 +60,16 @@ export interface BotConfig {
   BUY_COOLDOWN_MS: number;
   /** Grid size in USD for new positions */
   GRID_SIZE_USD: number;
-  /** Profit threshold percentage to trigger sell */
+  /** Profit threshold percentage to trigger sell check (e.g., 5%) */
   PROFIT_THRESHOLD_PERCENT: number;
+  /** Minimum acceptable profit multiplier (e.g., 1.08 = 8% minimum profit) */
+  MIN_PROFIT: number;
   /** Grid spacing percentage for dynamic generation */
   GRID_SPACING_PERCENT: number;
   /** Grid mode: pregenerated, autogenerate, or dynamic */
   GRID_MODE: GridMode;
+  /** Minimum amount required to bank profits (in token units) */
+  BANK_MIN_AMOUNT: number;
 }
 
 /**

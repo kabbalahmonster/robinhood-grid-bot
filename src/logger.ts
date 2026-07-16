@@ -1,9 +1,56 @@
 import winston from 'winston';
 import path from 'path';
+import fs from 'fs';
 
 // Get project root directory (works with both ESM and CJS after build)
 const PROJECT_ROOT = process.cwd();
 const LOGS_DIR = path.join(PROJECT_ROOT, 'logs');
+
+/**
+ * Get the next available log file number
+ * Checks logs/ folder for existing files and finds next available number (log1.txt, log2.txt, etc.)
+ */
+function getNextLogFileNumber(): number {
+  try {
+    // Ensure logs directory exists
+    if (!fs.existsSync(LOGS_DIR)) {
+      fs.mkdirSync(LOGS_DIR, { recursive: true });
+      return 1;
+    }
+
+    // Read existing files in logs directory
+    const files = fs.readdirSync(LOGS_DIR);
+    
+    // Find all files matching logN.txt pattern
+    const logNumbers: number[] = [];
+    const logPattern = /^log(\d+)\.txt$/;
+    
+    for (const file of files) {
+      const match = file.match(logPattern);
+      if (match) {
+        logNumbers.push(parseInt(match[1], 10));
+      }
+    }
+
+    // Return next available number
+    if (logNumbers.length === 0) {
+      return 1;
+    }
+
+    return Math.max(...logNumbers) + 1;
+  } catch (error) {
+    console.error('Error determining next log file number:', error);
+    return 1;
+  }
+}
+
+/**
+ * Generate sequential log filename
+ */
+const logFileNumber = getNextLogFileNumber();
+const sequentialLogFile = path.join(LOGS_DIR, `log${logFileNumber}.txt`);
+
+console.log(`Logging to: ${sequentialLogFile}`);
 
 /**
  * Create winston logger with console and file transports
@@ -36,7 +83,13 @@ export const logger = winston.createLogger({
         })
       ),
     }),
-    // File output - all logs
+    // File output - sequential numbered log file for this session
+    new winston.transports.File({
+      filename: sequentialLogFile,
+      maxsize: 5242880, // 5MB
+      maxFiles: 1,
+    }),
+    // File output - all logs (rotating)
     new winston.transports.File({
       filename: path.join(LOGS_DIR, 'bot.log'),
       maxsize: 5242880, // 5MB

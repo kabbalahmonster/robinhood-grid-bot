@@ -5,6 +5,7 @@ import { ZeroXQuote, ZeroXPrice } from './types.js';
 export declare function getPrice(sellToken: string, buyToken: string, sellAmount?: string, buyAmount?: string): Promise<ZeroXPrice | null>;
 /**
  * Get a swap quote from 0x API (includes transaction data)
+ * Includes anti-MEV jitter on sell amount to avoid front-running
  */
 export declare function getQuote(sellToken: string, buyToken: string, sellAmount?: string, buyAmount?: string, takerAddress?: string): Promise<ZeroXQuote | null>;
 /**

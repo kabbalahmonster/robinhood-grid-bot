@@ -576,6 +576,18 @@ export class GridBot {
       });
     }
 
+    // Check BANK_MIN_AMOUNT before proceeding with sell
+    const sellAmountTokens = Number(sellAmount) / Math.pow(10, tokenDecimals);
+    if (botConfig.BANK_PROFIT && sellAmountTokens < botConfig.BANK_MIN_AMOUNT) {
+      logger.warn(`[BANK CHECK] Sell BLOCKED for position ${position.id}: Amount below BANK_MIN_AMOUNT`, {
+        positionId: position.id,
+        sellAmount: sellAmountTokens,
+        bankMinAmount: botConfig.BANK_MIN_AMOUNT,
+        reason: 'Sell amount is below minimum banking threshold',
+      });
+      return;
+    }
+
     // ============================================================================
     // STRICT PROFIT CHECK: Get quote first before executing swap
     // ============================================================================
@@ -604,7 +616,9 @@ export class GridBot {
     // 2. Calculate minimum required output for profitable sell
     // Convert cost basis to USDG (position.cost is in USD terms)
     const costBasisUsd = position.cost * (Number(sellAmount) / Math.pow(10, tokenDecimals));
-    const minProfitMultiplier = 1 + (botConfig.PROFIT_THRESHOLD_PERCENT / 100);
+    // MIN_PROFIT is the minimum acceptable profit multiplier (e.g., 1.08 = 8% minimum profit)
+    // This is distinct from PROFIT_THRESHOLD_PERCENT which triggers the sell check
+    const minProfitMultiplier = botConfig.MIN_PROFIT;
     const minRequiredOutput = costBasisUsd * minProfitMultiplier;
 
     // Quote output is in base units (18 decimals for USDG)
@@ -619,6 +633,7 @@ export class GridBot {
       quoteOutputUsd,
       minRequiredOutput,
       profitThresholdPercent: botConfig.PROFIT_THRESHOLD_PERCENT,
+      minProfit: botConfig.MIN_PROFIT,
       minProfitMultiplier,
       meetsThreshold: quoteOutputUsd > minRequiredOutput,
       potentialProfitUsd: quoteOutputUsd - costBasisUsd,

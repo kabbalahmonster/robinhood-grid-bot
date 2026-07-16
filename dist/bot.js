@@ -462,6 +462,17 @@ class GridBot {
                 amount: Number(moonbagAmount) / Math.pow(10, tokenDecimals),
             });
         }
+        // Check BANK_MIN_AMOUNT before proceeding with sell
+        const sellAmountTokens = Number(sellAmount) / Math.pow(10, tokenDecimals);
+        if (config_js_1.botConfig.BANK_PROFIT && sellAmountTokens < config_js_1.botConfig.BANK_MIN_AMOUNT) {
+            logger_js_1.logger.warn(`[BANK CHECK] Sell BLOCKED for position ${position.id}: Amount below BANK_MIN_AMOUNT`, {
+                positionId: position.id,
+                sellAmount: sellAmountTokens,
+                bankMinAmount: config_js_1.botConfig.BANK_MIN_AMOUNT,
+                reason: 'Sell amount is below minimum banking threshold',
+            });
+            return;
+        }
         // ============================================================================
         // STRICT PROFIT CHECK: Get quote first before executing swap
         // ============================================================================
@@ -481,7 +492,9 @@ class GridBot {
         // 2. Calculate minimum required output for profitable sell
         // Convert cost basis to USDG (position.cost is in USD terms)
         const costBasisUsd = position.cost * (Number(sellAmount) / Math.pow(10, tokenDecimals));
-        const minProfitMultiplier = 1 + (config_js_1.botConfig.PROFIT_THRESHOLD_PERCENT / 100);
+        // MIN_PROFIT is the minimum acceptable profit multiplier (e.g., 1.08 = 8% minimum profit)
+        // This is distinct from PROFIT_THRESHOLD_PERCENT which triggers the sell check
+        const minProfitMultiplier = config_js_1.botConfig.MIN_PROFIT;
         const minRequiredOutput = costBasisUsd * minProfitMultiplier;
         // Quote output is in base units (18 decimals for USDG)
         const quoteOutputUsd = Number(quote.buyAmount) / Math.pow(10, tokenDecimals);
@@ -494,6 +507,7 @@ class GridBot {
             quoteOutputUsd,
             minRequiredOutput,
             profitThresholdPercent: config_js_1.botConfig.PROFIT_THRESHOLD_PERCENT,
+            minProfit: config_js_1.botConfig.MIN_PROFIT,
             minProfitMultiplier,
             meetsThreshold: quoteOutputUsd > minRequiredOutput,
             potentialProfitUsd: quoteOutputUsd - costBasisUsd,

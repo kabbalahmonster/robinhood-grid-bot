@@ -17,6 +17,8 @@ const DEFAULT_RETRY_CONFIG = {
     baseDelayMs: 1000,
     maxDelayMs: 30000,
 };
+// API request timeout in milliseconds
+const API_TIMEOUT_MS = 10000; // 10 seconds
 /**
  * Sleep for specified milliseconds
  */
@@ -44,7 +46,7 @@ async function makeRequest(url, params, retryConfig = DEFAULT_RETRY_CONFIG) {
                     '0x-api-key': config_js_1.walletConfig.zeroXApiKey,
                     '0x-version': 'v2',
                 },
-                timeout: 30000,
+                timeout: API_TIMEOUT_MS,
             });
             return response.data;
         }
@@ -93,6 +95,7 @@ async function getPrice(sellToken, buyToken, sellAmount, buyAmount) {
 }
 /**
  * Get a swap quote from 0x API (includes transaction data)
+ * Includes anti-MEV jitter on sell amount to avoid front-running
  */
 async function getQuote(sellToken, buyToken, sellAmount, buyAmount, takerAddress) {
     try {
@@ -102,7 +105,15 @@ async function getQuote(sellToken, buyToken, sellAmount, buyAmount, takerAddress
             buyToken,
         };
         if (sellAmount) {
-            params.sellAmount = sellAmount;
+            // Add randomness to amount to avoid MEV front-running
+            const originalAmount = BigInt(sellAmount);
+            const jitteredAmount = originalAmount + BigInt(Math.floor(Math.random() * 1000));
+            params.sellAmount = jitteredAmount.toString();
+            logger_js_1.logger.debug(`Applied anti-MEV jitter`, {
+                originalAmount: originalAmount.toString(),
+                jitteredAmount: jitteredAmount.toString(),
+                jitter: (jitteredAmount - originalAmount).toString(),
+            });
         }
         else if (buyAmount) {
             params.buyAmount = buyAmount;

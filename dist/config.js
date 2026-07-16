@@ -53,8 +53,10 @@ exports.botConfig = {
     BUY_COOLDOWN_MS: parseNumber(process.env.BUY_COOLDOWN_MS, 60000),
     GRID_SIZE_USD: parseNumber(process.env.GRID_SIZE_USD, 100),
     PROFIT_THRESHOLD_PERCENT: parseNumber(process.env.PROFIT_THRESHOLD_PERCENT, 5),
+    MIN_PROFIT: parseNumber(process.env.MIN_PROFIT, 1.08),
     GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
     GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
+    BANK_MIN_AMOUNT: parseNumber(process.env.BANK_MIN_AMOUNT, 0.5),
 };
 /**
  * Wallet configuration from environment variables
@@ -118,8 +120,10 @@ function logConfig() {
             BUY_COOLDOWN_MS: exports.botConfig.BUY_COOLDOWN_MS,
             GRID_SIZE_USD: exports.botConfig.GRID_SIZE_USD,
             PROFIT_THRESHOLD_PERCENT: exports.botConfig.PROFIT_THRESHOLD_PERCENT,
+            MIN_PROFIT: exports.botConfig.MIN_PROFIT,
             GRID_SPACING_PERCENT: exports.botConfig.GRID_SPACING_PERCENT,
             GRID_MODE: exports.botConfig.GRID_MODE,
+            BANK_MIN_AMOUNT: exports.botConfig.BANK_MIN_AMOUNT,
         },
         wallet: {
             rpcUrl: exports.walletConfig.rpcUrl,

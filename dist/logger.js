@@ -9,9 +9,49 @@ exports.logPosition = logPosition;
 exports.logPriceCheck = logPriceCheck;
 const winston_1 = __importDefault(require("winston"));
 const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
 // Get project root directory (works with both ESM and CJS after build)
 const PROJECT_ROOT = process.cwd();
 const LOGS_DIR = path_1.default.join(PROJECT_ROOT, 'logs');
+/**
+ * Get the next available log file number
+ * Checks logs/ folder for existing files and finds next available number (log1.txt, log2.txt, etc.)
+ */
+function getNextLogFileNumber() {
+    try {
+        // Ensure logs directory exists
+        if (!fs_1.default.existsSync(LOGS_DIR)) {
+            fs_1.default.mkdirSync(LOGS_DIR, { recursive: true });
+            return 1;
+        }
+        // Read existing files in logs directory
+        const files = fs_1.default.readdirSync(LOGS_DIR);
+        // Find all files matching logN.txt pattern
+        const logNumbers = [];
+        const logPattern = /^log(\d+)\.txt$/;
+        for (const file of files) {
+            const match = file.match(logPattern);
+            if (match) {
+                logNumbers.push(parseInt(match[1], 10));
+            }
+        }
+        // Return next available number
+        if (logNumbers.length === 0) {
+            return 1;
+        }
+        return Math.max(...logNumbers) + 1;
+    }
+    catch (error) {
+        console.error('Error determining next log file number:', error);
+        return 1;
+    }
+}
+/**
+ * Generate sequential log filename
+ */
+const logFileNumber = getNextLogFileNumber();
+const sequentialLogFile = path_1.default.join(LOGS_DIR, `log${logFileNumber}.txt`);
+console.log(`Logging to: ${sequentialLogFile}`);
 /**
  * Create winston logger with console and file transports
  */
@@ -35,7 +75,13 @@ exports.logger = winston_1.default.createLogger({
                 return msg;
             })),
         }),
-        // File output - all logs
+        // File output - sequential numbered log file for this session
+        new winston_1.default.transports.File({
+            filename: sequentialLogFile,
+            maxsize: 5242880, // 5MB
+            maxFiles: 1,
+        }),
+        // File output - all logs (rotating)
         new winston_1.default.transports.File({
             filename: path_1.default.join(LOGS_DIR, 'bot.log'),
             maxsize: 5242880, // 5MB

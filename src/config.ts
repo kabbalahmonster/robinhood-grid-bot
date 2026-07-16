@@ -48,8 +48,10 @@ export const botConfig: BotConfig = {
   BUY_COOLDOWN_MS: parseNumber(process.env.BUY_COOLDOWN_MS, 60000),
   GRID_SIZE_USD: parseNumber(process.env.GRID_SIZE_USD, 100),
   PROFIT_THRESHOLD_PERCENT: parseNumber(process.env.PROFIT_THRESHOLD_PERCENT, 5),
+  MIN_PROFIT: parseNumber(process.env.MIN_PROFIT, 1.08),
   GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
   GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
+  BANK_MIN_AMOUNT: parseNumber(process.env.BANK_MIN_AMOUNT, 0.5),
 };
 
 /**
@@ -124,8 +126,10 @@ export function logConfig(): Record<string, unknown> {
       BUY_COOLDOWN_MS: botConfig.BUY_COOLDOWN_MS,
       GRID_SIZE_USD: botConfig.GRID_SIZE_USD,
       PROFIT_THRESHOLD_PERCENT: botConfig.PROFIT_THRESHOLD_PERCENT,
+      MIN_PROFIT: botConfig.MIN_PROFIT,
       GRID_SPACING_PERCENT: botConfig.GRID_SPACING_PERCENT,
       GRID_MODE: botConfig.GRID_MODE,
+      BANK_MIN_AMOUNT: botConfig.BANK_MIN_AMOUNT,
     },
     wallet: {
       rpcUrl: walletConfig.rpcUrl,
