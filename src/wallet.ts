@@ -241,7 +241,31 @@ export async function checkAndApprovePermit2(
 }
 
 /**
+ * Check if token is approved to Permit2 for 0x swaps (read-only)
+ */
+export async function isApprovedToPermit2(
+  tokenAddress: string,
+  amount: bigint,
+  account: PrivateKeyAccount
+): Promise<boolean> {
+  const publicClient = createPublicClientInstance();
+  try {
+    const [permitAmount] = await publicClient.readContract({
+      address: tokenConfig.permit2Address as Hex,
+      abi: permit2Abi,
+      functionName: 'allowance',
+      args: [account.address, tokenAddress as Hex, ZEROX_EXCHANGE_PROXY as Hex],
+    });
+    return permitAmount >= amount;
+  } catch (error) {
+    logger.error(`Error checking Permit2 allowance for ${tokenAddress}:`, error);
+    return false;
+  }
+}
+
+/**
  * Execute a swap transaction from a 0x quote
+ * WARNING: 0x quotes expire quickly. Only call this if already approved.
  */
 export async function executeSwap(
   quote: ZeroXQuote,
@@ -251,19 +275,21 @@ export async function executeSwap(
   const walletClient = createWalletClientInstance(account);
 
   try {
-    // Check if Permit2 approval is needed for sell token
-    // 0x v2 uses Permit2, so we need to approve to Permit2 contract
+    // Check if Permit2 approval exists (quotes expire fast, can't approve during swap)
     if (quote.sellToken.toLowerCase() !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee') {
-      const approved = await checkAndApprovePermit2(
+      const isApproved = await isApprovedToPermit2(
         quote.sellToken,
         BigInt(quote.sellAmount),
         account
       );
 
-      if (!approved) {
+      if (!isApproved) {
+        // Trigger approval but don't swap this round - quote will expire
+        logger.warn(`Token ${quote.sellToken} not approved to Permit2. Approving now, will swap next round.`);
+        await checkAndApprovePermit2(quote.sellToken, BigInt(quote.sellAmount), account);
         return {
           success: false,
-          error: 'Token approval to Permit2 failed',
+          error: 'Token not approved to Permit2. Approval submitted, retry next round.',
         };
       }
     }

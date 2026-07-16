@@ -31,7 +31,12 @@ export declare function checkAndApproveToken(tokenAddress: string, spenderAddres
  */
 export declare function checkAndApprovePermit2(tokenAddress: string, amount: bigint, account: PrivateKeyAccount): Promise<boolean>;
 /**
+ * Check if token is approved to Permit2 for 0x swaps (read-only)
+ */
+export declare function isApprovedToPermit2(tokenAddress: string, amount: bigint, account: PrivateKeyAccount): Promise<boolean>;
+/**
  * Execute a swap transaction from a 0x quote
+ * WARNING: 0x quotes expire quickly. Only call this if already approved.
  */
 export declare function executeSwap(quote: ZeroXQuote, account: PrivateKeyAccount): Promise<TradeResult>;
 /**

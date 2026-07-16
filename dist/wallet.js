@@ -7,6 +7,7 @@ exports.createWalletClientInstance = createWalletClientInstance;
 exports.getTokenBalance = getTokenBalance;
 exports.checkAndApproveToken = checkAndApproveToken;
 exports.checkAndApprovePermit2 = checkAndApprovePermit2;
+exports.isApprovedToPermit2 = isApprovedToPermit2;
 exports.executeSwap = executeSwap;
 exports.getNativeBalance = getNativeBalance;
 exports.waitForTransaction = waitForTransaction;
@@ -208,20 +209,42 @@ async function checkAndApprovePermit2(tokenAddress, amount, account) {
     }
 }
 /**
+ * Check if token is approved to Permit2 for 0x swaps (read-only)
+ */
+async function isApprovedToPermit2(tokenAddress, amount, account) {
+    const publicClient = createPublicClientInstance();
+    try {
+        const [permitAmount] = await publicClient.readContract({
+            address: config_js_1.tokenConfig.permit2Address,
+            abi: permit2Abi,
+            functionName: 'allowance',
+            args: [account.address, tokenAddress, ZEROX_EXCHANGE_PROXY],
+        });
+        return permitAmount >= amount;
+    }
+    catch (error) {
+        logger_js_1.logger.error(`Error checking Permit2 allowance for ${tokenAddress}:`, error);
+        return false;
+    }
+}
+/**
  * Execute a swap transaction from a 0x quote
+ * WARNING: 0x quotes expire quickly. Only call this if already approved.
  */
 async function executeSwap(quote, account) {
     const publicClient = createPublicClientInstance();
     const walletClient = createWalletClientInstance(account);
     try {
-        // Check if Permit2 approval is needed for sell token
-        // 0x v2 uses Permit2, so we need to approve to Permit2 contract
+        // Check if Permit2 approval exists (quotes expire fast, can't approve during swap)
         if (quote.sellToken.toLowerCase() !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee') {
-            const approved = await checkAndApprovePermit2(quote.sellToken, BigInt(quote.sellAmount), account);
-            if (!approved) {
+            const isApproved = await isApprovedToPermit2(quote.sellToken, BigInt(quote.sellAmount), account);
+            if (!isApproved) {
+                // Trigger approval but don't swap this round - quote will expire
+                logger_js_1.logger.warn(`Token ${quote.sellToken} not approved to Permit2. Approving now, will swap next round.`);
+                await checkAndApprovePermit2(quote.sellToken, BigInt(quote.sellAmount), account);
                 return {
                     success: false,
-                    error: 'Token approval to Permit2 failed',
+                    error: 'Token not approved to Permit2. Approval submitted, retry next round.',
                 };
             }
         }
