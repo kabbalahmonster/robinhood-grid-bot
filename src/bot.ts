@@ -420,6 +420,7 @@ export class GridBot {
 
   /**
    * Execute stop loss sell for a specific position
+   * Validates quote output is reasonable before executing (no extreme slippage)
    */
   private async executeStopLoss(position: Position): Promise<void> {
     const symbol = position.symbol || 'WETH';
@@ -430,11 +431,84 @@ export class GridBot {
     const sellAmount = BigInt(Math.floor(position.balance * Math.pow(10, tokenDecimals)));
 
     if (sellAmount <= 0n) {
-      logger.warn(`No balance to sell for position ${position.id}`);
+      logger.warn(`[STOPLOSS CHECK] No balance to sell for position ${position.id}`);
       return;
     }
 
-    const result = await this.swapTokenToUsd(tokenAddress, sellAmount);
+    // ============================================================================
+    // STOPLOSS VALIDATION: Get quote first to verify reasonable output
+    // ============================================================================
+    logger.info(`[STOPLOSS CHECK] Getting stoploss quote for position ${position.id}`, {
+      positionId: position.id,
+      costBasis: position.cost,
+      balance: position.balance,
+      sellAmount: Number(sellAmount) / Math.pow(10, tokenDecimals),
+      stoplossPrice: position.stoploss,
+    });
+
+    // 1. Get quote first (before executing swap)
+    const quote = await getQuote(
+      tokenAddress,
+      tokenConfig.usdgAddress,
+      sellAmount.toString(),
+      undefined,
+      this.account.address
+    );
+
+    if (!quote) {
+      logger.error(`[STOPLOSS CHECK] Failed to get quote for position ${position.id}, skipping stoploss`);
+      return;
+    }
+
+    // 2. Calculate expected output based on stoploss price
+    // For stoploss, we expect at least 85% of theoretical value (allows for reasonable slippage)
+    const theoreticalValueUsd = position.stoploss * position.balance;
+    const quoteOutputUsd = Number(quote.buyAmount) / Math.pow(10, tokenDecimals);
+    const minAcceptableOutput = theoreticalValueUsd * 0.85; // 85% of stoploss value
+    const maxAllowedSlippagePercent = 15;
+
+    // 3. Log detailed comparison
+    logger.info(`[STOPLOSS CHECK] Stoploss quote analysis for position ${position.id}:`, {
+      positionId: position.id,
+      costBasis: position.cost,
+      stoplossPrice: position.stoploss,
+      theoreticalValueUsd,
+      quoteOutputUsd,
+      minAcceptableOutput,
+      maxAllowedSlippagePercent,
+      meetsThreshold: quoteOutputUsd >= minAcceptableOutput,
+      estimatedPriceImpact: quote.estimatedPriceImpact,
+      grossPrice: quote.grossPrice,
+      netPrice: quote.netPrice,
+      lossFromCostBasis: ((quoteOutputUsd - (position.cost * position.balance)) / (position.cost * position.balance)) * 100,
+    });
+
+    // 4. Validate quote is reasonable (not extreme slippage)
+    if (quoteOutputUsd < minAcceptableOutput) {
+      logger.warn(`[STOPLOSS CHECK] Stoploss VALIDATION WARNING for position ${position.id}: High slippage detected`, {
+        positionId: position.id,
+        quoteOutputUsd,
+        minAcceptableOutput,
+        shortfall: minAcceptableOutput - quoteOutputUsd,
+        shortfallPercent: ((minAcceptableOutput - quoteOutputUsd) / minAcceptableOutput) * 100,
+        reason: 'Quote output is significantly below stoploss price (possible high slippage)',
+      });
+      // Note: For stoploss, we may still want to execute to prevent further losses,
+      // but we log a strong warning. The bot operator can decide to block here if needed.
+      // For now, we proceed but with clear warning.
+    }
+
+    logger.info(`[STOPLOSS CHECK] Stoploss EXECUTING for position ${position.id}`, {
+      positionId: position.id,
+      quoteOutputUsd,
+      theoreticalValueUsd,
+      slippagePercent: ((theoreticalValueUsd - quoteOutputUsd) / theoreticalValueUsd) * 100,
+    });
+
+    // ============================================================================
+    // Execute the stoploss
+    // ============================================================================
+    const result = await executeSwap(quote, this.account);
 
     if (result.success) {
       // Reset position to empty state
@@ -451,17 +525,29 @@ export class GridBot {
         positionId: position.id,
         balance: position.balance,
         cost: position.cost,
+        quoteOutputUsd,
+        theoreticalValueUsd,
+        slippagePercent: ((theoreticalValueUsd - quoteOutputUsd) / theoreticalValueUsd) * 100,
         txHash: result.txHash,
       });
 
-      logger.info(`Stop loss executed for position ${position.id}: ${result.txHash}`);
+      logger.info(`[STOPLOSS CHECK] Stoploss EXECUTED for position ${position.id}: ${result.txHash}`, {
+        positionId: position.id,
+        txHash: result.txHash,
+        quoteOutputUsd,
+        lossPercent: ((quoteOutputUsd - (position.cost * position.balance)) / (position.cost * position.balance)) * 100,
+      });
     } else {
-      logger.error(`Stop loss failed for position ${position.id}: ${result.error}`);
+      logger.error(`[STOPLOSS CHECK] Stoploss execution FAILED for position ${position.id}: ${result.error}`, {
+        positionId: position.id,
+        error: result.error,
+      });
     }
   }
 
   /**
    * Execute profit-taking sell for a specific position
+   * STRICT PROFIT CHECK: Verifies quote output meets profit threshold before executing
    */
   private async executeSell(position: Position, currentPrice: number): Promise<void> {
     const symbol = position.symbol || 'WETH';
@@ -490,8 +576,83 @@ export class GridBot {
       });
     }
 
-    // Execute the sell
-    const result = await this.swapTokenToUsd(tokenAddress, sellAmount);
+    // ============================================================================
+    // STRICT PROFIT CHECK: Get quote first before executing swap
+    // ============================================================================
+    logger.info(`[PROFIT CHECK] Getting sell quote for position ${position.id}`, {
+      positionId: position.id,
+      costBasis: position.cost,
+      currentPrice,
+      sellAmount: Number(sellAmount) / Math.pow(10, tokenDecimals),
+      tokenDecimals,
+    });
+
+    // 1. Get quote first (before executing swap)
+    const quote = await getQuote(
+      tokenAddress,
+      tokenConfig.usdgAddress,
+      sellAmount.toString(),
+      undefined,
+      this.account.address
+    );
+
+    if (!quote) {
+      logger.error(`[PROFIT CHECK] Failed to get quote for position ${position.id}, skipping sell`);
+      return;
+    }
+
+    // 2. Calculate minimum required output for profitable sell
+    // Convert cost basis to USDG (position.cost is in USD terms)
+    const costBasisUsd = position.cost * (Number(sellAmount) / Math.pow(10, tokenDecimals));
+    const minProfitMultiplier = 1 + (botConfig.PROFIT_THRESHOLD_PERCENT / 100);
+    const minRequiredOutput = costBasisUsd * minProfitMultiplier;
+
+    // Quote output is in base units (18 decimals for USDG)
+    const quoteOutputUsd = Number(quote.buyAmount) / Math.pow(10, tokenDecimals);
+
+    // 3. Log detailed comparison
+    logger.info(`[PROFIT CHECK] Sell quote analysis for position ${position.id}:`, {
+      positionId: position.id,
+      costBasis: position.cost,
+      costBasisUsd,
+      sellTokenAmount: Number(sellAmount) / Math.pow(10, tokenDecimals),
+      quoteOutputUsd,
+      minRequiredOutput,
+      profitThresholdPercent: botConfig.PROFIT_THRESHOLD_PERCENT,
+      minProfitMultiplier,
+      meetsThreshold: quoteOutputUsd > minRequiredOutput,
+      potentialProfitUsd: quoteOutputUsd - costBasisUsd,
+      potentialProfitPercent: ((quoteOutputUsd - costBasisUsd) / costBasisUsd) * 100,
+      estimatedPriceImpact: quote.estimatedPriceImpact,
+      grossPrice: quote.grossPrice,
+      netPrice: quote.netPrice,
+      shortfall: quoteOutputUsd > minRequiredOutput ? 0 : minRequiredOutput - quoteOutputUsd,
+    });
+
+    // 4. Only execute if quote meets profit threshold
+    if (quoteOutputUsd <= minRequiredOutput) {
+      logger.warn(`[PROFIT CHECK] Sell BLOCKED for position ${position.id}: Quote below profit threshold`, {
+        positionId: position.id,
+        quoteOutputUsd,
+        minRequiredOutput,
+        shortfall: minRequiredOutput - quoteOutputUsd,
+        shortfallPercent: ((minRequiredOutput - quoteOutputUsd) / minRequiredOutput) * 100,
+        reason: 'Quote output does not meet minimum profit requirement',
+      });
+      return; // Skip this sell - protect against slippage and bad quotes
+    }
+
+    logger.info(`[PROFIT CHECK] Sell APPROVED for position ${position.id}: Quote meets profit threshold`, {
+      positionId: position.id,
+      quoteOutputUsd,
+      minRequiredOutput,
+      profitAboveThreshold: quoteOutputUsd - minRequiredOutput,
+    });
+
+    // ============================================================================
+    // Execute the sell (only after profit check passes)
+    // ============================================================================
+    const result = await executeSwap(quote, this.account);
 
     if (result.success) {
       if (moonbagAmount > 0n) {
@@ -526,13 +687,24 @@ export class GridBot {
         positionId: position.id,
         amount: Number(sellAmount) / Math.pow(10, tokenDecimals),
         price: currentPrice,
+        costBasis: position.cost,
+        actualOutputUsd: quoteOutputUsd,
+        expectedOutputUsd: minRequiredOutput,
         profit: (((currentPrice - position.cost) / position.cost) * 100).toFixed(2) + '%',
         txHash: result.txHash,
       });
 
-      logger.info(`Sell executed for position ${position.id}: ${result.txHash}`);
+      logger.info(`[PROFIT CHECK] Sell EXECUTED for position ${position.id}: ${result.txHash}`, {
+        positionId: position.id,
+        txHash: result.txHash,
+        actualOutputUsd: quoteOutputUsd,
+        minRequiredOutput,
+      });
     } else {
-      logger.error(`Sell failed for position ${position.id}: ${result.error}`);
+      logger.error(`[PROFIT CHECK] Sell execution FAILED for position ${position.id}: ${result.error}`, {
+        positionId: position.id,
+        error: result.error,
+      });
     }
   }
 

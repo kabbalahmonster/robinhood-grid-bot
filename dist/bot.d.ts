@@ -56,10 +56,12 @@ export declare class GridBot {
     private executeBuy;
     /**
      * Execute stop loss sell for a specific position
+     * Validates quote output is reasonable before executing (no extreme slippage)
      */
     private executeStopLoss;
     /**
      * Execute profit-taking sell for a specific position
+     * STRICT PROFIT CHECK: Verifies quote output meets profit threshold before executing
      */
     private executeSell;
     /**

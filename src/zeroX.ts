@@ -146,10 +146,30 @@ export async function getQuote(
       params.taker = takerAddress;
     }
 
+    logger.debug(`Getting 0x quote`, {
+      sellToken,
+      buyToken,
+      sellAmount: sellAmount || 'N/A',
+      buyAmount: buyAmount || 'N/A',
+      takerAddress: takerAddress || 'N/A',
+    });
+
     const quote = await makeRequest<ZeroXQuote>(
       `${ZEROX_API_BASE}/swap/permit2/quote`,
       params
     );
+
+    if (quote) {
+      logger.debug(`0x quote received`, {
+        sellToken: quote.sellToken,
+        buyToken: quote.buyToken,
+        sellAmount: quote.sellAmount,
+        buyAmount: quote.buyAmount,
+        estimatedPriceImpact: quote.estimatedPriceImpact,
+        grossPrice: quote.grossPrice,
+        netPrice: quote.netPrice,
+      });
+    }
 
     return quote;
   } catch (error) {
