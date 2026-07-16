@@ -159,6 +159,9 @@ export async function getQuote(
       params.taker = takerAddress;
     }
 
+    // Add slippage protection (2%)
+    params.slippagePercentage = '0.02';
+
     logger.debug(`Getting 0x quote`, {
       sellToken,
       buyToken,

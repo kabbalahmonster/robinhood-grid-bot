@@ -184,8 +184,19 @@ class GridBot {
             createdAt: Date.now(),
             lastBuyAt: undefined,
         };
-        this.positions = await (0, storage_js_1.savePosition)(this.positions, pos);
-        await this.executeBuy(pos, price);
+        // Try to execute buy first
+        const success = await this.executeBuy(pos, price);
+        if (success) {
+            // Only save position and update lastBuyPrice if buy succeeded
+            this.positions = await (0, storage_js_1.savePosition)(this.positions, pos);
+            this.lastBuyPrice = price;
+            logger_js_1.logger.info(`✅ Position ${id} created and filled at ${price} WETH`);
+        }
+        else {
+            // Buy failed - don't save position, decrement counter
+            this.positionsCreated--;
+            logger_js_1.logger.warn(`❌ Position ${id} buy failed - not saving empty position`);
+        }
     }
     async executeBuy(pos, price) {
         // Calculate WETH amount to spend
@@ -204,27 +215,34 @@ class GridBot {
         }
         if (wethAmount <= 0n) {
             logger_js_1.logger.warn('Insufficient WETH for buy');
-            return;
+            return false;
         }
         logger_js_1.logger.info(`Buying ${pos.id}: ${Number(wethAmount) / 1e18} WETH → ${config_js_1.tokenConfig.tradingTokenSymbol}`);
         // Get quote: WETH → Trading Token
         const quote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.wethAddress, config_js_1.tokenConfig.tradingTokenAddress, wethAmount.toString(), undefined, this.account.address);
         if (!quote) {
-            logger_js_1.logger.error('Failed to get buy quote');
-            return;
+            logger_js_1.logger.error('❌ Failed to get buy quote - no liquidity or pair not supported');
+            return false;
         }
+        logger_js_1.logger.info(`Quote received: ${quote.buyAmount} ${config_js_1.tokenConfig.tradingTokenSymbol} for ${Number(wethAmount) / 1e18} WETH`);
         const result = await (0, wallet_js_1.executeSwap)(quote, this.account);
         if (result.success && result.buyAmount) {
             const tokens = Number(result.buyAmount) / 1e18;
-            const updated = { ...pos, balance: tokens, costWeth: price, cost: price, lastBuyAt: Date.now() };
-            this.positions = await (0, storage_js_1.savePosition)(this.positions, updated);
+            // Update position in place
+            pos.balance = tokens;
+            pos.costWeth = price;
+            pos.cost = price;
+            pos.lastBuyAt = Date.now();
             (0, logger_js_1.logTrade)('BUY', pos.symbol || config_js_1.tokenConfig.tradingTokenSymbol, {
                 positionId: pos.id, amount: tokens, costWeth: price, txHash: result.txHash
             });
-            logger_js_1.logger.info(`Buy success: ${result.txHash}`);
+            logger_js_1.logger.info(`✅ Buy success: ${result.txHash}`);
+            return true;
         }
         else {
-            logger_js_1.logger.error(`Buy failed: ${result.error}`);
+            logger_js_1.logger.error(`❌ Buy failed: ${result.error}`);
+            logger_js_1.logger.error(`   Tx: ${result.txHash || 'N/A'}`);
+            return false;
         }
     }
     async executeSell(pos, price, isStoploss) {

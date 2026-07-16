@@ -191,7 +191,7 @@ async function executeSwap(quote, account) {
         // Wait for confirmation
         const receipt = await publicClient.waitForTransactionReceipt({ hash });
         if (receipt.status === 'success') {
-            logger_js_1.logger.info(`Swap successful: ${hash}`);
+            logger_js_1.logger.info(`✅ Swap successful: ${hash}`);
             return {
                 success: true,
                 txHash: hash,
@@ -200,10 +200,31 @@ async function executeSwap(quote, account) {
             };
         }
         else {
-            logger_js_1.logger.error(`Swap failed: ${hash}`);
+            // Try to get revert reason
+            let revertReason = 'Transaction reverted';
+            try {
+                const tx = await publicClient.getTransaction({ hash });
+                await publicClient.call({
+                    to: tx.to,
+                    data: tx.input,
+                    value: tx.value,
+                    account: account.address,
+                });
+            }
+            catch (callError) {
+                if (callError?.shortMessage) {
+                    revertReason = callError.shortMessage;
+                }
+                else if (callError?.message) {
+                    revertReason = callError.message;
+                }
+            }
+            logger_js_1.logger.error(`❌ Swap failed: ${hash}`);
+            logger_js_1.logger.error(`   Reason: ${revertReason}`);
+            logger_js_1.logger.error(`   Gas used: ${receipt.gasUsed}`);
             return {
                 success: false,
-                error: 'Transaction failed',
+                error: revertReason,
                 txHash: hash,
             };
         }

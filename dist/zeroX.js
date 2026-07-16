@@ -126,6 +126,8 @@ async function getQuote(sellToken, buyToken, sellAmount, buyAmount, takerAddress
         if (takerAddress) {
             params.taker = takerAddress;
         }
+        // Add slippage protection (2%)
+        params.slippagePercentage = '0.02';
         logger_js_1.logger.debug(`Getting 0x quote`, {
             sellToken,
             buyToken,

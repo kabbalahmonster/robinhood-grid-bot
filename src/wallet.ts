@@ -229,7 +229,7 @@ export async function executeSwap(
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
     if (receipt.status === 'success') {
-      logger.info(`Swap successful: ${hash}`);
+      logger.info(`✅ Swap successful: ${hash}`);
       return {
         success: true,
         txHash: hash,
@@ -237,10 +237,30 @@ export async function executeSwap(
         sellAmount: quote.sellAmount,
       };
     } else {
-      logger.error(`Swap failed: ${hash}`);
+      // Try to get revert reason
+      let revertReason = 'Transaction reverted';
+      try {
+        const tx = await publicClient.getTransaction({ hash });
+        await publicClient.call({
+          to: tx.to!,
+          data: tx.input,
+          value: tx.value,
+          account: account.address,
+        });
+      } catch (callError: any) {
+        if (callError?.shortMessage) {
+          revertReason = callError.shortMessage;
+        } else if (callError?.message) {
+          revertReason = callError.message;
+        }
+      }
+      
+      logger.error(`❌ Swap failed: ${hash}`);
+      logger.error(`   Reason: ${revertReason}`);
+      logger.error(`   Gas used: ${receipt.gasUsed}`);
       return {
         success: false,
-        error: 'Transaction failed',
+        error: revertReason,
         txHash: hash,
       };
     }
