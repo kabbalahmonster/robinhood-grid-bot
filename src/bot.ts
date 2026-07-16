@@ -5,10 +5,13 @@ import { logger, logTrade, logPosition } from './logger.js';
 import {
   loadPositions,
   savePositions,
-  addPosition,
+  savePosition,
   updatePosition,
   removePosition,
-  getPositionByToken,
+  getPositionsArray,
+  getEmptyPositions,
+  getFilledPositions,
+  initializePositions,
 } from './storage.js';
 import {
   getQuote,
@@ -25,12 +28,17 @@ import {
 
 /**
  * Grid Trading Bot for Robinhood Chain
+ * Supports pre-generated grid positions loaded from JSON
+ * Supports auto-generated grid positions at startup
+ * Supports dynamic on-demand positions (DCA on drops)
  */
 export class GridBot {
-  private positions: Position[] = [];
+  private positions: Record<string, Position> = {};
   private account = createAccount();
   private running = false;
   private checkInterval: NodeJS.Timeout | null = null;
+  private lastBuyPrice: number = 0;
+  private positionsCreated: number = 0;
 
   /**
    * Initialize the bot
@@ -38,10 +46,6 @@ export class GridBot {
   async initialize(): Promise<void> {
     logger.info('Initializing Grid Bot...');
     logger.info('Wallet address:', { address: this.account.address });
-
-    // Load existing positions
-    this.positions = await loadPositions();
-    logger.info(`Loaded ${this.positions.length} positions`);
 
     // Log configuration
     logger.info('Bot configuration:', {
@@ -51,7 +55,68 @@ export class GridBot {
       BANK_MOONBAG: botConfig.BANK_MOONBAG,
       STOPLOSS_ACTIVE: botConfig.STOPLOSS_ACTIVE,
       MAX_POSITIONS: botConfig.MAX_POSITIONS,
+      GRID_SPACING_PERCENT: botConfig.GRID_SPACING_PERCENT,
+      GRID_MODE: botConfig.GRID_MODE,
     });
+
+    // Handle different grid modes
+    if (botConfig.GRID_MODE === 'dynamic') {
+      // Dynamic mode: Start fresh, positions created on-demand
+      this.positions = await loadPositions();
+      this.positionsCreated = Object.keys(this.positions).length;
+      
+      // Find the last buy price from existing filled positions
+      const filledPositions = getFilledPositions(this.positions);
+      if (filledPositions.length > 0) {
+        // Get the most recently created position with balance
+        const lastPosition = filledPositions.sort((a, b) => 
+          (b.createdAt || 0) - (a.createdAt || 0)
+        )[0];
+        this.lastBuyPrice = lastPosition.cost;
+        logger.info(`Dynamic mode: Found ${this.positionsCreated} existing positions, last buy at ${this.lastBuyPrice}`);
+      } else {
+        logger.info('Dynamic mode: Starting fresh, no existing positions');
+      }
+    } else if (botConfig.GRID_MODE === 'autogenerate') {
+      // Auto-generate mode: Generate grid positions at startup
+      const currentPrice = await getTokenPriceInUsd(
+        tokenConfig.wethAddress,
+        tokenConfig.wethAddress
+      );
+      
+      if (currentPrice) {
+        this.positions = await initializePositions(
+          true,
+          currentPrice,
+          botConfig.GRID_SIZE_USD,
+          botConfig.GRID_SPACING_PERCENT,
+          botConfig.MAX_POSITIONS,
+          tokenConfig.wethAddress,
+          'WETH'
+        );
+        logger.info(`Auto-generated ${Object.keys(this.positions).length} grid positions`);
+      } else {
+        logger.warn('Could not get current price for auto-generation, starting with empty positions');
+        this.positions = {};
+      }
+    } else {
+      // Pregenerated mode: Load positions from positions.json
+      this.positions = await loadPositions();
+      const positionCount = Object.keys(this.positions).length;
+      logger.info(`Pregenerated mode: Loaded ${positionCount} positions from storage`);
+    }
+
+    // Log loaded positions summary
+    const positionCount = Object.keys(this.positions).length;
+    if (positionCount > 0) {
+      const filledPositions = getFilledPositions(this.positions);
+      const emptyPositions = getEmptyPositions(this.positions);
+      logger.info('Positions summary:', {
+        total: positionCount,
+        filled: filledPositions.length,
+        empty: emptyPositions.length,
+      });
+    }
   }
 
   /**
@@ -93,6 +158,9 @@ export class GridBot {
 
   /**
    * Check all positions and execute trades as needed
+   * New behavior: Check ALL empty positions for buy opportunities
+   * Check ALL filled positions for sell/stoploss conditions
+   * Dynamic mode: Create positions on-demand when price drops
    */
   private async checkAllPositions(): Promise<void> {
     const timestamp = new Date().toISOString();
@@ -105,19 +173,41 @@ export class GridBot {
     );
     logger.debug(`USDG Balance: ${usdgBalance.formattedBalance}`);
 
-    // Check existing positions for sells/stoploss
-    for (let i = this.positions.length - 1; i >= 0; i--) {
-      const position = this.positions[i];
-      await this.checkPositionForSell(position, i);
+    // Get current price for the target token (WETH)
+    const currentPrice = await getTokenPriceInUsd(
+      tokenConfig.wethAddress,
+      tokenConfig.wethAddress
+    );
+
+    if (currentPrice === null) {
+      logger.warn('Could not get current price, skipping check');
+      return;
     }
 
-    // Check for new buy opportunities if we have capacity and USDG
-    if (
-      botConfig.BUYS_ACTIVE &&
-      this.positions.length < botConfig.MAX_POSITIONS &&
-      parseFloat(usdgBalance.formattedBalance) >= botConfig.GRID_SIZE_USD
-    ) {
-      await this.checkForBuyOpportunities();
+    logger.debug(`Current price: ${currentPrice}`);
+
+    // Check ALL filled positions for sell/stoploss opportunities
+    const filledPositions = getFilledPositions(this.positions);
+    logger.debug(`Checking ${filledPositions.length} filled positions for sell conditions`);
+
+    for (const position of filledPositions) {
+      await this.checkPositionForSell(position, currentPrice);
+    }
+
+    // Handle buys based on grid mode
+    if (botConfig.BUYS_ACTIVE && parseFloat(usdgBalance.formattedBalance) >= botConfig.GRID_SIZE_USD) {
+      if (botConfig.GRID_MODE === 'dynamic') {
+        // Dynamic mode: Create positions on-demand
+        await this.checkDynamicBuyOpportunity(currentPrice);
+      } else {
+        // Pregenerated/Autogenerate mode: Check existing empty positions
+        const emptyPositions = getEmptyPositions(this.positions);
+        logger.debug(`Checking ${emptyPositions.length} empty positions for buy opportunities`);
+
+        for (const position of emptyPositions) {
+          await this.checkPositionForBuy(position, currentPrice);
+        }
+      }
     }
 
     // Save positions after all checks
@@ -125,248 +215,324 @@ export class GridBot {
   }
 
   /**
-   * Check a single position for sell conditions
+   * Check a single position for buy conditions
+   * Buy logic: If position is empty (balance=0) and current price is within buyMin-buyMax range
    */
-  private async checkPositionForSell(
+  private async checkPositionForBuy(
     position: Position,
-    index: number
+    currentPrice: number
   ): Promise<void> {
     try {
-      // Get current price
-      const currentPrice = await getTokenPriceInUsd(
-        position.tokenAddress,
-        tokenConfig.wethAddress
-      );
-
-      if (currentPrice === null) {
-        logger.warn(`Could not get price for ${position.symbol}`);
+      // Only check empty positions
+      if (position.balance !== 0) {
         return;
       }
 
-      const costBasis = parseFloat(position.cost);
-      const profitPercent = ((currentPrice - costBasis) / costBasis) * 100;
-      const stoplossPrice = parseFloat(position.stoploss);
-      const sellMinPrice = parseFloat(position.sellMin);
-
-      logger.debug(`Position check: ${position.symbol}`, {
+      logger.debug(`Checking buy for position ${position.id}`, {
         currentPrice,
-        costBasis,
-        profitPercent,
-        stoplossPrice,
-        sellMinPrice,
+        buyMin: position.buyMin,
+        buyMax: position.buyMax,
       });
 
-      // Check stop loss first
-      if (botConfig.STOPLOSS_ACTIVE && currentPrice <= stoplossPrice) {
-        logger.warn(`STOP LOSS triggered for ${position.symbol}!`, {
+      // Check if current price is within buy range
+      if (currentPrice >= position.buyMin && currentPrice <= position.buyMax) {
+        logger.info(`Buy opportunity found for position ${position.id}!`, {
           currentPrice,
-          stoplossPrice,
+          buyMin: position.buyMin,
+          buyMax: position.buyMax,
+        });
+        await this.executeBuy(position, currentPrice);
+      }
+    } catch (error) {
+      logger.error(`Error checking buy for position ${position.id}:`, error);
+    }
+  }
+
+  /**
+   * Dynamic mode: Check for buy opportunities based on price drops
+   * Creates new positions on-demand when price drops by GRID_SPACING_PERCENT
+   */
+  private async checkDynamicBuyOpportunity(currentPrice: number): Promise<void> {
+    try {
+      const dropPercent = botConfig.GRID_SPACING_PERCENT;
+
+      // First buy - create position 1 at current price
+      if (this.positionsCreated === 0) {
+        logger.info(`Dynamic mode: First buy at ${currentPrice}`, {
+          dropPercent,
+          maxPositions: botConfig.MAX_POSITIONS,
+        });
+        await this.createAndBuyPosition(currentPrice);
+        this.lastBuyPrice = currentPrice;
+        return;
+      }
+
+      // Subsequent buys - check if price dropped enough from last buy
+      const dropThreshold = this.lastBuyPrice * (1 - dropPercent / 100);
+      
+      logger.debug(`Dynamic mode: Checking drop`, {
+        currentPrice,
+        lastBuyPrice: this.lastBuyPrice,
+        dropThreshold,
+        dropPercent,
+        positionsCreated: this.positionsCreated,
+        maxPositions: botConfig.MAX_POSITIONS,
+      });
+
+      if (currentPrice <= dropThreshold && this.positionsCreated < botConfig.MAX_POSITIONS) {
+        logger.info(`Dynamic mode: Price dropped ${dropPercent}% from ${this.lastBuyPrice} to ${currentPrice}, creating position ${this.positionsCreated + 1}`);
+        await this.createAndBuyPosition(currentPrice);
+        this.lastBuyPrice = currentPrice;
+      }
+    } catch (error) {
+      logger.error('Error in dynamic buy check:', error);
+    }
+  }
+
+  /**
+   * Dynamic mode: Create a new position and execute buy
+   */
+  private async createAndBuyPosition(currentPrice: number): Promise<void> {
+    const id = (this.positionsCreated + 1).toString();
+    const profitPercent = botConfig.PROFIT_THRESHOLD_PERCENT;
+    const stoplossPercent = Math.abs(botConfig.STOPLOSS_PERCENTAGE);
+    
+    const sellMin = currentPrice * (1 + profitPercent / 100);
+    const stoploss = currentPrice * (1 - stoplossPercent / 100);
+
+    const position: Position = {
+      id,
+      balance: 0,
+      cost: 0,
+      buyMin: currentPrice * 0.99, // Bought at current
+      buyMax: currentPrice * 1.01,
+      sellMin,
+      stoploss,
+      tokenAddress: tokenConfig.wethAddress,
+      symbol: 'WETH',
+      createdAt: Date.now(),
+    };
+
+    // Save position first
+    this.positions = await savePosition(this.positions, position);
+    
+    // Execute the buy
+    await this.executeBuy(position, currentPrice);
+    
+    // Update tracking
+    this.positionsCreated++;
+    
+    logger.info(`Dynamic mode: Created and bought position ${id} at ${currentPrice}`, {
+      sellMin,
+      stoploss,
+      positionsCreated: this.positionsCreated,
+    });
+  }
+
+  /**
+   * Check a single position for sell conditions
+   * Sell logic: If position has balance and current price hits sellMin or stoploss
+   */
+  private async checkPositionForSell(
+    position: Position,
+    currentPrice: number
+  ): Promise<void> {
+    try {
+      // Only check filled positions
+      if (position.balance <= 0) {
+        return;
+      }
+
+      const costBasis = position.cost;
+      const profitPercent = costBasis > 0 ? ((currentPrice - costBasis) / costBasis) * 100 : 0;
+
+      logger.debug(`Checking sell for position ${position.id}`, {
+        currentPrice,
+        costBasis,
+        profitPercent: profitPercent.toFixed(2) + '%',
+        sellMin: position.sellMin,
+        stoploss: position.stoploss,
+      });
+
+      // Check stop loss first (highest priority)
+      if (botConfig.STOPLOSS_ACTIVE && currentPrice <= position.stoploss) {
+        logger.warn(`STOP LOSS triggered for position ${position.id}!`, {
+          currentPrice,
+          stoploss: position.stoploss,
           loss: profitPercent.toFixed(2) + '%',
         });
-        await this.executeStopLoss(position, index);
+        await this.executeStopLoss(position);
         return;
       }
 
       // Check profit target
-      if (botConfig.SELLS_ACTIVE && currentPrice >= sellMinPrice) {
-        logger.info(`Profit target reached for ${position.symbol}!`, {
+      if (botConfig.SELLS_ACTIVE && currentPrice >= position.sellMin) {
+        logger.info(`Profit target reached for position ${position.id}!`, {
           currentPrice,
-          target: sellMinPrice,
+          target: position.sellMin,
           profit: profitPercent.toFixed(2) + '%',
         });
-        await this.executeSell(position, index, currentPrice);
+        await this.executeSell(position, currentPrice);
       }
     } catch (error) {
-      logger.error(`Error checking position ${position.symbol}:`, error);
+      logger.error(`Error checking sell for position ${position.id}:`, error);
     }
   }
 
   /**
-   * Execute stop loss sell
+   * Execute buy into a specific position
    */
-  private async executeStopLoss(
-    position: Position,
-    index: number
-  ): Promise<void> {
-    const balance = await getTokenBalance(
-      position.tokenAddress,
-      this.account.address
+  private async executeBuy(position: Position, currentPrice: number): Promise<void> {
+    const symbol = position.symbol || 'WETH';
+    const tokenAddress = position.tokenAddress || tokenConfig.wethAddress;
+
+    // Convert USDG amount to base units (USDG has 18 decimals)
+    const buyAmountUsd = BigInt(
+      Math.floor(botConfig.GRID_SIZE_USD * Math.pow(10, 18))
     );
 
-    if (balance.balance === 0n) {
-      logger.warn(`No balance to sell for ${position.symbol}`);
-      await removePosition(this.positions, index);
+    const result = await this.swapUsdToToken(tokenAddress, buyAmountUsd);
+
+    if (result.success && result.buyAmount) {
+      // Update position with new balance and cost
+      const buyAmountNum = Number(result.buyAmount) / Math.pow(10, 18); // Assuming 18 decimals
+      const updatedPosition: Position = {
+        ...position,
+        balance: buyAmountNum,
+        cost: currentPrice,
+        lastBuyAt: Date.now(),
+      };
+
+      this.positions = await savePosition(this.positions, updatedPosition);
+
+      logTrade('BUY', symbol, {
+        positionId: position.id,
+        amount: buyAmountNum,
+        cost: currentPrice,
+        txHash: result.txHash,
+      });
+
+      logger.info(`Buy executed for position ${position.id}: ${result.txHash}`);
+    } else {
+      logger.error(`Buy failed for position ${position.id}: ${result.error}`);
+    }
+  }
+
+  /**
+   * Execute stop loss sell for a specific position
+   */
+  private async executeStopLoss(position: Position): Promise<void> {
+    const symbol = position.symbol || 'WETH';
+    const tokenAddress = position.tokenAddress || tokenConfig.wethAddress;
+
+    // Calculate token amount to sell based on position balance
+    const tokenDecimals = 18; // Assuming 18 decimals
+    const sellAmount = BigInt(Math.floor(position.balance * Math.pow(10, tokenDecimals)));
+
+    if (sellAmount <= 0n) {
+      logger.warn(`No balance to sell for position ${position.id}`);
       return;
     }
 
-    const result = await this.swapTokenToUsd(
-      position.tokenAddress,
-      balance.balance
-    );
+    const result = await this.swapTokenToUsd(tokenAddress, sellAmount);
 
     if (result.success) {
-      const { updated, removed } = await removePosition(this.positions, index);
-      this.positions = updated;
-      logTrade('STOPLOSS', position.symbol, {
-        balance: balance.formattedBalance,
+      // Reset position to empty state
+      const updatedPosition: Position = {
+        ...position,
+        balance: 0,
+        cost: 0,
+        lastBuyAt: undefined,
+      };
+
+      this.positions = await savePosition(this.positions, updatedPosition);
+
+      logTrade('STOPLOSS', symbol, {
+        positionId: position.id,
+        balance: position.balance,
         cost: position.cost,
         txHash: result.txHash,
       });
-      logger.info(`Stop loss executed for ${position.symbol}: ${result.txHash}`);
+
+      logger.info(`Stop loss executed for position ${position.id}: ${result.txHash}`);
     } else {
-      logger.error(`Stop loss failed for ${position.symbol}: ${result.error}`);
+      logger.error(`Stop loss failed for position ${position.id}: ${result.error}`);
     }
   }
 
   /**
-   * Execute profit-taking sell with optional moonbag
+   * Execute profit-taking sell for a specific position
    */
-  private async executeSell(
-    position: Position,
-    index: number,
-    currentPrice: number
-  ): Promise<void> {
-    const balance = await getTokenBalance(
-      position.tokenAddress,
-      this.account.address
-    );
+  private async executeSell(position: Position, currentPrice: number): Promise<void> {
+    const symbol = position.symbol || 'WETH';
+    const tokenAddress = position.tokenAddress || tokenConfig.wethAddress;
 
-    if (balance.balance === 0n) {
-      logger.warn(`No balance to sell for ${position.symbol}`);
-      await removePosition(this.positions, index);
+    // Calculate token amount to sell based on position balance
+    const tokenDecimals = 18; // Assuming 18 decimals
+    const totalBalance = BigInt(Math.floor(position.balance * Math.pow(10, tokenDecimals)));
+
+    if (totalBalance <= 0n) {
+      logger.warn(`No balance to sell for position ${position.id}`);
       return;
     }
 
     // Calculate sell amount (considering moonbag)
-    let sellAmount = balance.balance;
+    let sellAmount = totalBalance;
     let moonbagAmount = 0n;
 
     if (botConfig.BANK_MOONBAG && botConfig.MOONBAG_PERCENTAGE > 0) {
-      moonbagAmount = (balance.balance * BigInt(botConfig.MOONBAG_PERCENTAGE)) / 100n;
-      sellAmount = balance.balance - moonbagAmount;
+      moonbagAmount = (totalBalance * BigInt(botConfig.MOONBAG_PERCENTAGE)) / 100n;
+      sellAmount = totalBalance - moonbagAmount;
 
-      logger.info(`Keeping moonbag for ${position.symbol}:`, {
+      logger.info(`Keeping moonbag for position ${position.id}:`, {
         percentage: botConfig.MOONBAG_PERCENTAGE,
-        amount: (Number(moonbagAmount) / Math.pow(10, balance.decimals)).toFixed(6),
+        amount: Number(moonbagAmount) / Math.pow(10, tokenDecimals),
       });
     }
 
     // Execute the sell
-    const result = await this.swapTokenToUsd(
-      position.tokenAddress,
-      sellAmount
-    );
+    const result = await this.swapTokenToUsd(tokenAddress, sellAmount);
 
     if (result.success) {
       if (moonbagAmount > 0n) {
         // Update position with remaining moonbag
-        const newCost = currentPrice.toString();
-        await updatePosition(this.positions, index, {
-          balance: moonbagAmount.toString(),
-          cost: newCost,
-          buyMin: (currentPrice * 0.95).toString(), // 5% below current
-          buyMax: (currentPrice * 1.05).toString(), // 5% above current
-          sellMin: (currentPrice * 1.05).toString(), // 5% profit target
-          stoploss: (currentPrice * 0.9).toString(), // 10% stop loss
-        });
-        logTrade('MOONBAG', position.symbol, {
-          remainingBalance: (Number(moonbagAmount) / Math.pow(10, balance.decimals)).toFixed(6),
-          newCostBasis: newCost,
+        const moonbagBalance = Number(moonbagAmount) / Math.pow(10, tokenDecimals);
+        const updatedPosition: Position = {
+          ...position,
+          balance: moonbagBalance,
+          cost: currentPrice, // Reset cost basis to current price
+        };
+
+        this.positions = await savePosition(this.positions, updatedPosition);
+
+        logTrade('MOONBAG', symbol, {
+          positionId: position.id,
+          remainingBalance: moonbagBalance,
+          newCostBasis: currentPrice,
         });
       } else {
-        // Full sell - remove position
-        const { updated } = await removePosition(this.positions, index);
-        this.positions = updated;
+        // Full sell - reset position to empty state
+        const updatedPosition: Position = {
+          ...position,
+          balance: 0,
+          cost: 0,
+          lastBuyAt: undefined,
+        };
+
+        this.positions = await savePosition(this.positions, updatedPosition);
       }
 
-      logTrade('SELL', position.symbol, {
-        amount: (Number(sellAmount) / Math.pow(10, balance.decimals)).toFixed(6),
+      logTrade('SELL', symbol, {
+        positionId: position.id,
+        amount: Number(sellAmount) / Math.pow(10, tokenDecimals),
         price: currentPrice,
-        profit: (((currentPrice - parseFloat(position.cost)) / parseFloat(position.cost)) * 100).toFixed(2) + '%',
+        profit: (((currentPrice - position.cost) / position.cost) * 100).toFixed(2) + '%',
         txHash: result.txHash,
       });
 
-      logger.info(`Sell executed for ${position.symbol}: ${result.txHash}`);
+      logger.info(`Sell executed for position ${position.id}: ${result.txHash}`);
     } else {
-      logger.error(`Sell failed for ${position.symbol}: ${result.error}`);
-    }
-  }
-
-  /**
-   * Check for new buy opportunities
-   */
-  private async checkForBuyOpportunities(): Promise<void> {
-    // For now, we'll use WETH as the primary trading token
-    // In a real implementation, you might scan multiple tokens
-    const targetToken = tokenConfig.wethAddress;
-
-    // Check if we already have a position for this token
-    if (getPositionByToken(this.positions, targetToken).position !== null) {
-      return;
-    }
-
-    // Get current price
-    const currentPrice = await getTokenPriceInUsd(
-      targetToken,
-      tokenConfig.wethAddress
-    );
-
-    if (currentPrice === null) {
-      return;
-    }
-
-    // Calculate grid levels
-    const buyMax = currentPrice * 1.02; // Buy if price is within 2% of current
-    const buyMin = currentPrice * 0.98;
-    const sellMin = currentPrice * 1.05; // 5% profit target
-    const stoploss = currentPrice * 0.9; // 10% stop loss
-
-    // Check if current price is within buy range
-    if (currentPrice >= buyMin && currentPrice <= buyMax) {
-      logger.info(`Buy opportunity found for WETH at ${currentPrice}`);
-      await this.executeBuy(targetToken, 'WETH', currentPrice);
-    }
-  }
-
-  /**
-   * Execute a buy order
-   */
-  private async executeBuy(
-    tokenAddress: string,
-    symbol: string,
-    currentPrice: number
-  ): Promise<void> {
-    // Convert USDG amount to base units (USDG has 18 decimals)
-    const buyAmountUsd = parseFloat(
-      (botConfig.GRID_SIZE_USD * Math.pow(10, 18)).toFixed(0)
-    );
-
-    const result = await this.swapUsdToToken(tokenAddress, BigInt(buyAmountUsd));
-
-    if (result.success && result.buyAmount) {
-      // Create new position
-      const newPosition: Position = {
-        balance: result.buyAmount,
-        cost: currentPrice.toString(),
-        buyMin: (currentPrice * 0.95).toString(),
-        buyMax: (currentPrice * 1.05).toString(),
-        sellMin: (currentPrice * 1.05).toString(),
-        stoploss: (currentPrice * 0.9).toString(),
-        tokenAddress,
-        symbol,
-        createdAt: Date.now(),
-        lastBuyAt: Date.now(),
-      };
-
-      this.positions = await addPosition(this.positions, newPosition);
-      logTrade('BUY', symbol, {
-        amount: result.buyAmount,
-        cost: currentPrice,
-        txHash: result.txHash,
-      });
-      logger.info(`Buy executed for ${symbol}: ${result.txHash}`);
-    } else {
-      logger.error(`Buy failed for ${symbol}: ${result.error}`);
+      logger.error(`Sell failed for position ${position.id}: ${result.error}`);
     }
   }
 
@@ -417,8 +583,15 @@ export class GridBot {
   /**
    * Get current positions
    */
-  getPositions(): Position[] {
-    return [...this.positions];
+  getPositions(): Record<string, Position> {
+    return { ...this.positions };
+  }
+
+  /**
+   * Get positions as array
+   */
+  getPositionsArray(): Position[] {
+    return getPositionsArray(this.positions);
   }
 
   /**
@@ -426,5 +599,28 @@ export class GridBot {
    */
   isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Generate and save grid positions
+   * Useful for initial setup
+   */
+  async generateGridPositions(
+    basePrice: number,
+    numGrids: number,
+    tokenAddress?: string,
+    symbol?: string
+  ): Promise<void> {
+    const { generateGridPositions: generateFn } = await import('./storage.js');
+    this.positions = generateFn(
+      basePrice,
+      botConfig.GRID_SIZE_USD,
+      botConfig.GRID_SPACING_PERCENT,
+      numGrids,
+      tokenAddress || tokenConfig.wethAddress,
+      symbol || 'WETH'
+    );
+    await savePositions(this.positions);
+    logger.info(`Generated and saved ${numGrids} grid positions`);
   }
 }

@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { BotConfig, WalletConfig, TokenConfig } from './types.js';
+import { BotConfig, WalletConfig, TokenConfig, GridMode } from './types.js';
 
 dotenv.config();
 
@@ -21,6 +21,18 @@ function parseNumber(value: string | undefined, defaultValue: number): number {
 }
 
 /**
+ * Parse grid mode from environment variable
+ */
+function parseGridMode(value: string | undefined, defaultValue: GridMode): GridMode {
+  if (value === undefined) return defaultValue;
+  const validModes: GridMode[] = ['pregenerated', 'autogenerate', 'dynamic'];
+  if (validModes.includes(value as GridMode)) {
+    return value as GridMode;
+  }
+  return defaultValue;
+}
+
+/**
  * Bot configuration from environment variables
  */
 export const botConfig: BotConfig = {
@@ -36,6 +48,8 @@ export const botConfig: BotConfig = {
   BUY_COOLDOWN_MS: parseNumber(process.env.BUY_COOLDOWN_MS, 60000),
   GRID_SIZE_USD: parseNumber(process.env.GRID_SIZE_USD, 100),
   PROFIT_THRESHOLD_PERCENT: parseNumber(process.env.PROFIT_THRESHOLD_PERCENT, 5),
+  GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
+  GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
 };
 
 /**
@@ -78,6 +92,15 @@ export function validateConfig(): void {
     errors.push('STOPLOSS_PERCENTAGE must be negative (e.g., -10 for 10% loss)');
   }
 
+  if (botConfig.GRID_SPACING_PERCENT <= 0) {
+    errors.push('GRID_SPACING_PERCENT must be positive');
+  }
+
+  const validModes: GridMode[] = ['pregenerated', 'autogenerate', 'dynamic'];
+  if (!validModes.includes(botConfig.GRID_MODE)) {
+    errors.push(`GRID_MODE must be one of: ${validModes.join(', ')}`);
+  }
+
   if (errors.length > 0) {
     throw new Error(`Configuration errors:\n${errors.join('\n')}`);
   }
@@ -101,6 +124,8 @@ export function logConfig(): Record<string, unknown> {
       BUY_COOLDOWN_MS: botConfig.BUY_COOLDOWN_MS,
       GRID_SIZE_USD: botConfig.GRID_SIZE_USD,
       PROFIT_THRESHOLD_PERCENT: botConfig.PROFIT_THRESHOLD_PERCENT,
+      GRID_SPACING_PERCENT: botConfig.GRID_SPACING_PERCENT,
+      GRID_MODE: botConfig.GRID_MODE,
     },
     wallet: {
       rpcUrl: walletConfig.rpcUrl,

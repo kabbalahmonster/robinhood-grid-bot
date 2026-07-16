@@ -2,27 +2,37 @@
  * Position structure for grid trading
  */
 export interface Position {
-  /** Token balance in the position */
-  balance: string;
+  /** Unique position ID */
+  id: string;
+  /** Token balance in the position (0 if empty) */
+  balance: number;
   /** Average cost basis for the position */
-  cost: string;
+  cost: number;
   /** Minimum price to buy (lower bound) */
-  buyMin: string;
+  buyMin: number;
   /** Maximum price to buy (upper bound) */
-  buyMax: string;
+  buyMax: number;
   /** Minimum price to sell (profit target) */
-  sellMin: string;
+  sellMin: number;
   /** Stop loss price */
-  stoploss: string;
+  stoploss: number;
   /** Token address */
-  tokenAddress: string;
+  tokenAddress?: string;
   /** Token symbol */
-  symbol: string;
+  symbol?: string;
   /** Timestamp when position was created */
-  createdAt: number;
+  createdAt?: number;
   /** Last buy timestamp */
-  lastBuyAt: number;
+  lastBuyAt?: number;
 }
+
+/**
+ * Grid mode options
+ * - pregenerated: Load positions from positions.json
+ * - autogenerate: Generate all grid positions at startup
+ * - dynamic: Create positions on-demand as price drops (DCA mode)
+ */
+export type GridMode = 'pregenerated' | 'autogenerate' | 'dynamic';
 
 /**
  * Configuration flags matching Python bot
@@ -52,6 +62,10 @@ export interface BotConfig {
   GRID_SIZE_USD: number;
   /** Profit threshold percentage to trigger sell */
   PROFIT_THRESHOLD_PERCENT: number;
+  /** Grid spacing percentage for dynamic generation */
+  GRID_SPACING_PERCENT: number;
+  /** Grid mode: pregenerated, autogenerate, or dynamic */
+  GRID_MODE: GridMode;
 }
 
 /**
@@ -116,9 +130,10 @@ export interface ZeroXPrice {
 
 /**
  * Position data stored in JSON file
+ * Uses Record format for easy position lookup by ID
  */
 export interface PositionsData {
-  positions: Position[];
+  positions: Record<string, Position>;
   lastUpdated: number;
   version: string;
 }

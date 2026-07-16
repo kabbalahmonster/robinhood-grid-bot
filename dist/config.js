@@ -26,6 +26,18 @@ function parseNumber(value, defaultValue) {
     return isNaN(parsed) ? defaultValue : parsed;
 }
 /**
+ * Parse grid mode from environment variable
+ */
+function parseGridMode(value, defaultValue) {
+    if (value === undefined)
+        return defaultValue;
+    const validModes = ['pregenerated', 'autogenerate', 'dynamic'];
+    if (validModes.includes(value)) {
+        return value;
+    }
+    return defaultValue;
+}
+/**
  * Bot configuration from environment variables
  */
 exports.botConfig = {
@@ -41,6 +53,8 @@ exports.botConfig = {
     BUY_COOLDOWN_MS: parseNumber(process.env.BUY_COOLDOWN_MS, 60000),
     GRID_SIZE_USD: parseNumber(process.env.GRID_SIZE_USD, 100),
     PROFIT_THRESHOLD_PERCENT: parseNumber(process.env.PROFIT_THRESHOLD_PERCENT, 5),
+    GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
+    GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
 };
 /**
  * Wallet configuration from environment variables
@@ -75,6 +89,13 @@ function validateConfig() {
     if (exports.botConfig.STOPLOSS_PERCENTAGE >= 0) {
         errors.push('STOPLOSS_PERCENTAGE must be negative (e.g., -10 for 10% loss)');
     }
+    if (exports.botConfig.GRID_SPACING_PERCENT <= 0) {
+        errors.push('GRID_SPACING_PERCENT must be positive');
+    }
+    const validModes = ['pregenerated', 'autogenerate', 'dynamic'];
+    if (!validModes.includes(exports.botConfig.GRID_MODE)) {
+        errors.push(`GRID_MODE must be one of: ${validModes.join(', ')}`);
+    }
     if (errors.length > 0) {
         throw new Error(`Configuration errors:\n${errors.join('\n')}`);
     }
@@ -97,6 +118,8 @@ function logConfig() {
             BUY_COOLDOWN_MS: exports.botConfig.BUY_COOLDOWN_MS,
             GRID_SIZE_USD: exports.botConfig.GRID_SIZE_USD,
             PROFIT_THRESHOLD_PERCENT: exports.botConfig.PROFIT_THRESHOLD_PERCENT,
+            GRID_SPACING_PERCENT: exports.botConfig.GRID_SPACING_PERCENT,
+            GRID_MODE: exports.botConfig.GRID_MODE,
         },
         wallet: {
             rpcUrl: exports.walletConfig.rpcUrl,

@@ -1,0 +1,62 @@
+{
+  "positions": {
+    "1": {
+      "id": "1",
+      "balance": 0,
+      "buyMax": 600000,
+      "buyMin": 0,
+      "sellMin": 660000,
+      "cost": 0,
+      "stoploss": 500000,
+      "tokenAddress": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "symbol": "WETH"
+    },
+    "2": {
+      "id": "2",
+      "balance": 0,
+      "buyMax": 622335,
+      "buyMin": 600000,
+      "sellMin": 684568,
+      "cost": 0,
+      "stoploss": 518612,
+      "tokenAddress": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "symbol": "WETH"
+    },
+    "3": {
+      "id": "3",
+      "balance": 0,
+      "buyMax": 645523,
+      "buyMin": 622335,
+      "sellMin": 710075,
+      "cost": 0,
+      "stoploss": 537945,
+      "tokenAddress": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "symbol": "WETH"
+    },
+    "4": {
+      "id": "4",
+      "balance": 0,
+      "buyMax": 669568,
+      "buyMin": 645523,
+      "sellMin": 736525,
+      "cost": 0,
+      "stoploss": 557973,
+      "tokenAddress": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "symbol": "WETH"
+    },
+    "5": {
+      "id": "5",
+      "balance": 1.5,
+      "buyMax": 694500,
+      "buyMin": 669568,
+      "sellMin": 763950,
+      "cost": 680000,
+      "stoploss": 578715,
+      "tokenAddress": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "symbol": "WETH",
+      "lastBuyAt": 1752614400000
+    }
+  },
+  "lastUpdated": 1752614400000,
+  "version": "2.0.0"
+}
