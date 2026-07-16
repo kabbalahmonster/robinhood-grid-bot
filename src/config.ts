@@ -46,26 +46,44 @@ function parseBuyAmountMode(value: string | undefined, defaultValue: BuyAmountMo
 
 /**
  * Bot configuration from environment variables
+ * 
+ * ROBINHOOD CHAIN OPTIMIZED DEFAULTS:
+ * - GAS_RESERVE_ETH: 0.001 (was 0.01) - L2 gas is cheap on Robinhood Chain
+ * - BANK_MIN_AMOUNT: 1.0 (was 0.5) - $1 minimum for cleaner accounting
+ * - CHECK_INTERVAL_MS: 10000 (was 30000) - 10 second checks for faster response
+ * - GRID_SIZE_USD: 10 (was 100) - Start small, scale up as you gain confidence
+ * - MAX_POSITIONS: 20 (was 10) - More grid levels for finer price granularity
+ * - GRID_SPACING_PERCENT: 5 (was 3.72) - Clean 5% spacing between levels
+ * - MIN_PROFIT: 1.05 (was 1.08) - 5% profit target (conservative)
+ * - MOONBAG_PERCENTAGE: 10 (was 20) - Keep 10% for upside
+ * - BUY_COOLDOWN_MS: 30000 (was 60000) - 30 second cooldown
  */
 export const botConfig: BotConfig = {
+  // Feature Toggles
   BANK_PROFIT: parseBool(process.env.BANK_PROFIT, true),
   SELLS_ACTIVE: parseBool(process.env.SELLS_ACTIVE, true),
   BUYS_ACTIVE: parseBool(process.env.BUYS_ACTIVE, true),
   BANK_MOONBAG: parseBool(process.env.BANK_MOONBAG, true),
   STOPLOSS_ACTIVE: parseBool(process.env.STOPLOSS_ACTIVE, true),
-  MOONBAG_PERCENTAGE: parseNumber(process.env.MOONBAG_PERCENTAGE, 20),
+
+  // Profit & Safety Settings
+  MOONBAG_PERCENTAGE: parseNumber(process.env.MOONBAG_PERCENTAGE, 10),
   STOPLOSS_PERCENTAGE: parseNumber(process.env.STOPLOSS_PERCENTAGE, -10),
-  MAX_POSITIONS: parseNumber(process.env.MAX_POSITIONS, 10),
-  CHECK_INTERVAL_MS: parseNumber(process.env.CHECK_INTERVAL_MS, 30000),
-  BUY_COOLDOWN_MS: parseNumber(process.env.BUY_COOLDOWN_MS, 60000),
-  GRID_SIZE_USD: parseNumber(process.env.GRID_SIZE_USD, 100),
   PROFIT_THRESHOLD_PERCENT: parseNumber(process.env.PROFIT_THRESHOLD_PERCENT, 5),
-  MIN_PROFIT: parseNumber(process.env.MIN_PROFIT, 1.08),
-  GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
+  MIN_PROFIT: parseNumber(process.env.MIN_PROFIT, 1.05),
+  BANK_MIN_AMOUNT: parseNumber(process.env.BANK_MIN_AMOUNT, 1.0),
+
+  // Grid Settings
+  MAX_POSITIONS: parseNumber(process.env.MAX_POSITIONS, 20),
+  GRID_SIZE_USD: parseNumber(process.env.GRID_SIZE_USD, 10),
+  GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 5),
   GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
-  BANK_MIN_AMOUNT: parseNumber(process.env.BANK_MIN_AMOUNT, 0.5),
-  BUY_AMOUNT_MODE: parseBuyAmountMode(process.env.BUY_AMOUNT_MODE, 'static'),
-  GAS_RESERVE_ETH: parseNumber(process.env.GAS_RESERVE_ETH, 0.01),
+  BUY_AMOUNT_MODE: parseBuyAmountMode(process.env.BUY_AMOUNT_MODE, 'dynamic'),
+
+  // Timing & Gas
+  CHECK_INTERVAL_MS: parseNumber(process.env.CHECK_INTERVAL_MS, 10000),
+  BUY_COOLDOWN_MS: parseNumber(process.env.BUY_COOLDOWN_MS, 30000),
+  GAS_RESERVE_ETH: parseNumber(process.env.GAS_RESERVE_ETH, 0.001),
 };
 
 /**
@@ -73,7 +91,7 @@ export const botConfig: BotConfig = {
  */
 export const walletConfig: WalletConfig = {
   privateKey: process.env.PRIVATE_KEY || '',
-  rpcUrl: process.env.RPC_URL || 'https://robinhood.rh-chain.com',
+  rpcUrl: process.env.RPC_URL || 'https://rpc.robinhoodchain.com',
   chainId: parseNumber(process.env.CHAIN_ID, 4663),
   zeroXApiKey: process.env.ZEROX_API_KEY || '',
 };
