@@ -88,11 +88,22 @@ exports.botConfig = {
     GAS_RESERVE_ETH: parseNumber(process.env.GAS_RESERVE_ETH, 0.001),
 };
 /**
+ * Build RPC URL - uses Alchemy if key provided, otherwise falls back to env or default
+ */
+function buildRpcUrl() {
+    const alchemyKey = process.env.ALCHEMY_API_KEY;
+    if (alchemyKey) {
+        // Robinhood Chain on Alchemy
+        return `https://robinhood-mainnet.g.alchemy.com/v2/${alchemyKey}`;
+    }
+    return process.env.RPC_URL || 'https://rpc.robinhoodchain.com';
+}
+/**
  * Wallet configuration from environment variables
  */
 exports.walletConfig = {
     privateKey: process.env.PRIVATE_KEY || '',
-    rpcUrl: process.env.RPC_URL || 'https://rpc.robinhoodchain.com',
+    rpcUrl: buildRpcUrl(),
     chainId: parseNumber(process.env.CHAIN_ID, 4663),
     zeroXApiKey: process.env.ZEROX_API_KEY || '',
 };
