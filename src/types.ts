@@ -103,8 +103,12 @@ export interface WalletConfig {
 export interface TokenConfig {
   /** USDG (reserve/bank currency) address */
   usdgAddress: string;
-  /** WETH address for quotes */
+  /** WETH address (quote currency, like SOL in Python bot) */
   wethAddress: string;
+  /** Trading token address (the coin you want to trade, e.g., COMPUTE) */
+  tradingTokenAddress: string;
+  /** Trading token symbol (e.g., "COMPUTE") */
+  tradingTokenSymbol: string;
 }
 
 /**

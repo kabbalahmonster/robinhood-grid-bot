@@ -20,6 +20,11 @@ export declare const botConfig: BotConfig;
 export declare const walletConfig: WalletConfig;
 /**
  * Token configuration from environment variables
+ *
+ * TRADING TOKEN SETUP (like Python bot):
+ * - WETH = quote currency (like SOL)
+ * - TRADING_TOKEN = coin being traded (e.g., COMPUTE)
+ * - USDG = bank currency (stablecoin)
  */
 export declare const tokenConfig: TokenConfig;
 /**

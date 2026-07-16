@@ -98,10 +98,17 @@ exports.walletConfig = {
 };
 /**
  * Token configuration from environment variables
+ *
+ * TRADING TOKEN SETUP (like Python bot):
+ * - WETH = quote currency (like SOL)
+ * - TRADING_TOKEN = coin being traded (e.g., COMPUTE)
+ * - USDG = bank currency (stablecoin)
  */
 exports.tokenConfig = {
     usdgAddress: process.env.USDG_ADDRESS || '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
     wethAddress: process.env.WETH_ADDRESS || '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    tradingTokenAddress: process.env.TRADING_TOKEN_ADDRESS || process.env.WETH_ADDRESS || '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+    tradingTokenSymbol: process.env.TRADING_TOKEN_SYMBOL || 'WETH',
 };
 /**
  * Validate configuration
