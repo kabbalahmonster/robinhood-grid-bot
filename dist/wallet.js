@@ -210,17 +210,30 @@ async function checkAndApprovePermit2(tokenAddress, amount, account) {
 }
 /**
  * Check if token is approved to Permit2 for 0x swaps (read-only)
+ * Permit2 returns (amount, expiration, nonce) - must check expiration too
  */
 async function isApprovedToPermit2(tokenAddress, amount, account) {
     const publicClient = createPublicClientInstance();
     try {
-        const [permitAmount] = await publicClient.readContract({
+        const [permitAmount, expiration] = await publicClient.readContract({
             address: config_js_1.tokenConfig.permit2Address,
             abi: permit2Abi,
             functionName: 'allowance',
             args: [account.address, tokenAddress, ZEROX_EXCHANGE_PROXY],
         });
-        return permitAmount >= amount;
+        const now = Math.floor(Date.now() / 1000);
+        const isExpired = expiration > 0 && expiration < now;
+        const hasEnough = permitAmount >= amount;
+        logger_js_1.logger.debug(`Permit2 allowance check for ${tokenAddress}:`, {
+            permitAmount: permitAmount.toString(),
+            required: amount.toString(),
+            expiration: expiration.toString(),
+            now,
+            isExpired,
+            hasEnough,
+            valid: hasEnough && !isExpired
+        });
+        return hasEnough && !isExpired;
     }
     catch (error) {
         logger_js_1.logger.error(`Error checking Permit2 allowance for ${tokenAddress}:`, error);

@@ -32,6 +32,7 @@ export declare function checkAndApproveToken(tokenAddress: string, spenderAddres
 export declare function checkAndApprovePermit2(tokenAddress: string, amount: bigint, account: PrivateKeyAccount): Promise<boolean>;
 /**
  * Check if token is approved to Permit2 for 0x swaps (read-only)
+ * Permit2 returns (amount, expiration, nonce) - must check expiration too
  */
 export declare function isApprovedToPermit2(tokenAddress: string, amount: bigint, account: PrivateKeyAccount): Promise<boolean>;
 /**
