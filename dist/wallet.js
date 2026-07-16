@@ -6,6 +6,7 @@ exports.createPublicClientInstance = createPublicClientInstance;
 exports.createWalletClientInstance = createWalletClientInstance;
 exports.getTokenBalance = getTokenBalance;
 exports.checkAndApproveToken = checkAndApproveToken;
+exports.checkAndApprovePermit2 = checkAndApprovePermit2;
 exports.executeSwap = executeSwap;
 exports.getNativeBalance = getNativeBalance;
 exports.waitForTransaction = waitForTransaction;
@@ -17,6 +18,12 @@ const accounts_1 = require("viem/accounts");
 const config_js_1 = require("./config.js");
 const logger_js_1 = require("./logger.js");
 const zeroX_js_1 = require("./zeroX.js");
+// Permit2 ABI for allowance checks
+const permit2Abi = (0, viem_1.parseAbi)([
+    'function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)',
+]);
+// 0x Exchange Proxy address for v2 API
+const ZEROX_EXCHANGE_PROXY = '0xDef1C0ded9bec7F1a1670819833240f027b25EfF';
 // ERC20 ABI for balance and allowance checks
 const erc20Abi = (0, viem_1.parseAbi)([
     'function balanceOf(address owner) view returns (uint256)',
@@ -156,19 +163,65 @@ async function checkAndApproveToken(tokenAddress, spenderAddress, amount, accoun
     }
 }
 /**
+ * Check if Permit2 approval is needed and approve if necessary
+ * 0x v2 API uses Permit2 for token transfers
+ */
+async function checkAndApprovePermit2(tokenAddress, amount, account) {
+    const publicClient = createPublicClientInstance();
+    const walletClient = createWalletClientInstance(account);
+    try {
+        // Check current Permit2 allowance for 0x Exchange Proxy
+        const [permitAmount] = await publicClient.readContract({
+            address: config_js_1.tokenConfig.permit2Address,
+            abi: permit2Abi,
+            functionName: 'allowance',
+            args: [account.address, tokenAddress, ZEROX_EXCHANGE_PROXY],
+        });
+        if (permitAmount >= amount) {
+            logger_js_1.logger.debug(`Token ${tokenAddress} already approved via Permit2`);
+            return true;
+        }
+        // Approve token to Permit2 contract (infinite approval)
+        logger_js_1.logger.info(`Approving ${tokenAddress} to Permit2 for 0x swaps`);
+        const maxUint256 = 2n ** 256n - 1n;
+        const hash = await walletClient.writeContract({
+            address: tokenAddress,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [config_js_1.tokenConfig.permit2Address, maxUint256],
+            chain: exports.robinhoodChain,
+            account: account,
+        });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status === 'success') {
+            logger_js_1.logger.info(`✅ Permit2 approval successful: ${hash}`);
+            return true;
+        }
+        else {
+            logger_js_1.logger.error(`❌ Permit2 approval failed: ${hash}`);
+            return false;
+        }
+    }
+    catch (error) {
+        logger_js_1.logger.error(`Error approving token ${tokenAddress} to Permit2:`, error);
+        return false;
+    }
+}
+/**
  * Execute a swap transaction from a 0x quote
  */
 async function executeSwap(quote, account) {
     const publicClient = createPublicClientInstance();
     const walletClient = createWalletClientInstance(account);
     try {
-        // Check if approval is needed for sell token
+        // Check if Permit2 approval is needed for sell token
+        // 0x v2 uses Permit2, so we need to approve to Permit2 contract
         if (quote.sellToken.toLowerCase() !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee') {
-            const approved = await checkAndApproveToken(quote.sellToken, quote.allowanceTarget, BigInt(quote.sellAmount), account);
+            const approved = await checkAndApprovePermit2(quote.sellToken, BigInt(quote.sellAmount), account);
             if (!approved) {
                 return {
                     success: false,
-                    error: 'Token approval failed',
+                    error: 'Token approval to Permit2 failed',
                 };
             }
         }

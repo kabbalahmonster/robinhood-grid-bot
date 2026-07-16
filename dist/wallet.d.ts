@@ -26,6 +26,11 @@ export declare function getTokenBalance(tokenAddress: string, ownerAddress: stri
  */
 export declare function checkAndApproveToken(tokenAddress: string, spenderAddress: string, amount: bigint, account: PrivateKeyAccount): Promise<boolean>;
 /**
+ * Check if Permit2 approval is needed and approve if necessary
+ * 0x v2 API uses Permit2 for token transfers
+ */
+export declare function checkAndApprovePermit2(tokenAddress: string, amount: bigint, account: PrivateKeyAccount): Promise<boolean>;
+/**
  * Execute a swap transaction from a 0x quote
  */
 export declare function executeSwap(quote: ZeroXQuote, account: PrivateKeyAccount): Promise<TradeResult>;

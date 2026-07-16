@@ -111,6 +111,8 @@ export interface TokenConfig {
     tradingTokenAddress: string;
     /** Trading token symbol (e.g., "COMPUTE") */
     tradingTokenSymbol: string;
+    /** Permit2 contract address (required for 0x v2 swaps) */
+    permit2Address: string;
 }
 /**
  * 0x API Quote response
