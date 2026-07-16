@@ -59,7 +59,10 @@ export class GridBot {
       const filled = getFilledPositions(this.positions);
       if (filled.length > 0) {
         const last = filled.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-        this.lastBuyPrice = last.cost;
+        this.lastBuyPrice = last.costWeth || last.cost || 0;
+        logger.info(`Loaded ${filled.length} filled positions. Last buy price: ${this.lastBuyPrice} WETH`);
+      } else {
+        logger.info(`No filled positions loaded. Starting fresh.`);
       }
     } else {
       const price = await getTokenPriceInWeth(tokenConfig.tradingTokenAddress, tokenConfig.wethAddress);
@@ -192,19 +195,23 @@ export class GridBot {
 
   private async checkDynamicBuy(price: number): Promise<void> {
     if (this.positionsCreated === 0) {
-      await this.createAndBuy(price);
-      this.lastBuyPrice = price;
+      const success = await this.createAndBuy(price);
+      if (success) {
+        this.lastBuyPrice = price;
+      }
       return;
     }
     
     const threshold = this.lastBuyPrice * (1 - botConfig.GRID_SPACING_PERCENT / 100);
     if (price <= threshold && this.positionsCreated < botConfig.MAX_POSITIONS) {
-      await this.createAndBuy(price);
-      this.lastBuyPrice = price;
+      const success = await this.createAndBuy(price);
+      if (success) {
+        this.lastBuyPrice = price;
+      }
     }
   }
 
-  private async createAndBuy(price: number): Promise<void> {
+  private async createAndBuy(price: number): Promise<boolean> {
     const id = String(++this.positionsCreated);
     const pos: Position = {
       id,
@@ -220,19 +227,20 @@ export class GridBot {
       createdAt: Date.now(),
       lastBuyAt: undefined,
     };
-    
+
     // Try to execute buy first
     const success = await this.executeBuy(pos, price);
-    
+
     if (success) {
       // Only save position and update lastBuyPrice if buy succeeded
       this.positions = await savePosition(this.positions, pos);
-      this.lastBuyPrice = price;
       logger.info(`✅ Position ${id} created and filled at ${price} WETH`);
+      return true;
     } else {
       // Buy failed - don't save position, decrement counter
       this.positionsCreated--;
       logger.warn(`❌ Position ${id} buy failed - not saving empty position`);
+      return false;
     }
   }
 

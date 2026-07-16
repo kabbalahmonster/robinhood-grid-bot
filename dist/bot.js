@@ -39,7 +39,11 @@ class GridBot {
             const filled = (0, storage_js_1.getFilledPositions)(this.positions);
             if (filled.length > 0) {
                 const last = filled.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-                this.lastBuyPrice = last.cost;
+                this.lastBuyPrice = last.costWeth || last.cost || 0;
+                logger_js_1.logger.info(`Loaded ${filled.length} filled positions. Last buy price: ${this.lastBuyPrice} WETH`);
+            }
+            else {
+                logger_js_1.logger.info(`No filled positions loaded. Starting fresh.`);
             }
         }
         else {
@@ -158,14 +162,18 @@ class GridBot {
     }
     async checkDynamicBuy(price) {
         if (this.positionsCreated === 0) {
-            await this.createAndBuy(price);
-            this.lastBuyPrice = price;
+            const success = await this.createAndBuy(price);
+            if (success) {
+                this.lastBuyPrice = price;
+            }
             return;
         }
         const threshold = this.lastBuyPrice * (1 - config_js_1.botConfig.GRID_SPACING_PERCENT / 100);
         if (price <= threshold && this.positionsCreated < config_js_1.botConfig.MAX_POSITIONS) {
-            await this.createAndBuy(price);
-            this.lastBuyPrice = price;
+            const success = await this.createAndBuy(price);
+            if (success) {
+                this.lastBuyPrice = price;
+            }
         }
     }
     async createAndBuy(price) {
@@ -189,13 +197,14 @@ class GridBot {
         if (success) {
             // Only save position and update lastBuyPrice if buy succeeded
             this.positions = await (0, storage_js_1.savePosition)(this.positions, pos);
-            this.lastBuyPrice = price;
             logger_js_1.logger.info(`✅ Position ${id} created and filled at ${price} WETH`);
+            return true;
         }
         else {
             // Buy failed - don't save position, decrement counter
             this.positionsCreated--;
             logger_js_1.logger.warn(`❌ Position ${id} buy failed - not saving empty position`);
+            return false;
         }
     }
     async executeBuy(pos, price) {
