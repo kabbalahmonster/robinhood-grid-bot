@@ -35,6 +35,13 @@ export interface Position {
 export type GridMode = 'pregenerated' | 'autogenerate' | 'dynamic';
 
 /**
+ * Buy amount calculation mode
+ * - static: Use fixed GRID_SIZE_USD for every buy
+ * - dynamic: Calculate buy amount based on available balance divided by empty positions
+ */
+export type BuyAmountMode = 'static' | 'dynamic';
+
+/**
  * Configuration flags matching Python bot
  */
 export interface BotConfig {
@@ -58,7 +65,7 @@ export interface BotConfig {
   CHECK_INTERVAL_MS: number;
   /** Cooldown between buys for same token in milliseconds */
   BUY_COOLDOWN_MS: number;
-  /** Grid size in USD for new positions */
+  /** Grid size in USD for new positions (used in static mode) */
   GRID_SIZE_USD: number;
   /** Profit threshold percentage to trigger sell check (e.g., 5%) */
   PROFIT_THRESHOLD_PERCENT: number;
@@ -70,6 +77,10 @@ export interface BotConfig {
   GRID_MODE: GridMode;
   /** Minimum amount required to bank profits (in token units) */
   BANK_MIN_AMOUNT: number;
+  /** Buy amount calculation mode: static or dynamic */
+  BUY_AMOUNT_MODE: BuyAmountMode;
+  /** ETH to reserve for gas (default: 0.01) - used in dynamic mode */
+  GAS_RESERVE_ETH: number;
 }
 
 /**

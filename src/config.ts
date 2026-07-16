@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { BotConfig, WalletConfig, TokenConfig, GridMode } from './types.js';
+import { BotConfig, WalletConfig, TokenConfig, GridMode, BuyAmountMode } from './types.js';
 
 dotenv.config();
 
@@ -33,6 +33,18 @@ function parseGridMode(value: string | undefined, defaultValue: GridMode): GridM
 }
 
 /**
+ * Parse buy amount mode from environment variable
+ */
+function parseBuyAmountMode(value: string | undefined, defaultValue: BuyAmountMode): BuyAmountMode {
+  if (value === undefined) return defaultValue;
+  const validModes: BuyAmountMode[] = ['static', 'dynamic'];
+  if (validModes.includes(value as BuyAmountMode)) {
+    return value as BuyAmountMode;
+  }
+  return defaultValue;
+}
+
+/**
  * Bot configuration from environment variables
  */
 export const botConfig: BotConfig = {
@@ -52,6 +64,8 @@ export const botConfig: BotConfig = {
   GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
   GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
   BANK_MIN_AMOUNT: parseNumber(process.env.BANK_MIN_AMOUNT, 0.5),
+  BUY_AMOUNT_MODE: parseBuyAmountMode(process.env.BUY_AMOUNT_MODE, 'static'),
+  GAS_RESERVE_ETH: parseNumber(process.env.GAS_RESERVE_ETH, 0.01),
 };
 
 /**
@@ -103,6 +117,15 @@ export function validateConfig(): void {
     errors.push(`GRID_MODE must be one of: ${validModes.join(', ')}`);
   }
 
+  const validBuyModes: BuyAmountMode[] = ['static', 'dynamic'];
+  if (!validBuyModes.includes(botConfig.BUY_AMOUNT_MODE)) {
+    errors.push(`BUY_AMOUNT_MODE must be one of: ${validBuyModes.join(', ')}`);
+  }
+
+  if (botConfig.GAS_RESERVE_ETH < 0) {
+    errors.push('GAS_RESERVE_ETH must be non-negative');
+  }
+
   if (errors.length > 0) {
     throw new Error(`Configuration errors:\n${errors.join('\n')}`);
   }
@@ -130,6 +153,8 @@ export function logConfig(): Record<string, unknown> {
       GRID_SPACING_PERCENT: botConfig.GRID_SPACING_PERCENT,
       GRID_MODE: botConfig.GRID_MODE,
       BANK_MIN_AMOUNT: botConfig.BANK_MIN_AMOUNT,
+      BUY_AMOUNT_MODE: botConfig.BUY_AMOUNT_MODE,
+      GAS_RESERVE_ETH: botConfig.GAS_RESERVE_ETH,
     },
     wallet: {
       rpcUrl: walletConfig.rpcUrl,

@@ -35,6 +35,9 @@ class GridBot {
             MAX_POSITIONS: config_js_1.botConfig.MAX_POSITIONS,
             GRID_SPACING_PERCENT: config_js_1.botConfig.GRID_SPACING_PERCENT,
             GRID_MODE: config_js_1.botConfig.GRID_MODE,
+            BUY_AMOUNT_MODE: config_js_1.botConfig.BUY_AMOUNT_MODE,
+            GAS_RESERVE_ETH: config_js_1.botConfig.GAS_RESERVE_ETH,
+            GRID_SIZE_USD: config_js_1.botConfig.GRID_SIZE_USD,
         });
         // Handle different grid modes
         if (config_js_1.botConfig.GRID_MODE === 'dynamic') {
@@ -300,13 +303,136 @@ class GridBot {
         }
     }
     /**
+     * Calculate buy amount based on configured mode
+     *
+     * Static Mode: Use fixed GRID_SIZE_USD for every buy
+     * Dynamic Mode: Calculate buy amount based on available balance divided by empty positions
+     *
+     * @returns The calculated buy amount in base units (wei), or null if calculation fails
+     */
+    async calculateBuyAmount() {
+        logger_js_1.logger.info(`[BUY AMOUNT] Calculating buy amount using ${config_js_1.botConfig.BUY_AMOUNT_MODE} mode`);
+        // Static Mode: Use fixed GRID_SIZE_USD
+        if (config_js_1.botConfig.BUY_AMOUNT_MODE === 'static') {
+            const buyAmountUsd = BigInt(Math.floor(config_js_1.botConfig.GRID_SIZE_USD * Math.pow(10, 18)));
+            logger_js_1.logger.info(`[BUY AMOUNT] Static mode: Using fixed GRID_SIZE_USD`, {
+                gridSizeUsd: config_js_1.botConfig.GRID_SIZE_USD,
+                buyAmountUsd: buyAmountUsd.toString(),
+                buyAmountFormatted: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
+            });
+            return buyAmountUsd;
+        }
+        // Dynamic Mode: Calculate based on available balance
+        if (config_js_1.botConfig.BUY_AMOUNT_MODE === 'dynamic') {
+            try {
+                // 1. Get wallet balance (USDG)
+                const balance = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.usdgAddress, this.account.address);
+                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Retrieved wallet balance`, {
+                    address: this.account.address,
+                    rawBalance: balance.balance.toString(),
+                    formattedBalance: balance.formattedBalance,
+                    decimals: balance.decimals,
+                });
+                // 2. Subtract gas reserve (convert ETH to USDG equivalent, assuming 1:1 for simplicity)
+                // Note: USDG has 18 decimals like ETH
+                const gasReserve = BigInt(Math.floor(config_js_1.botConfig.GAS_RESERVE_ETH * Math.pow(10, 18)));
+                const usableBalance = balance.balance - gasReserve;
+                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Gas reserve calculation`, {
+                    gasReserveEth: config_js_1.botConfig.GAS_RESERVE_ETH,
+                    gasReserveWei: gasReserve.toString(),
+                    rawBalance: balance.balance.toString(),
+                    usableBalance: usableBalance.toString(),
+                    usableBalanceFormatted: (Number(usableBalance) / Math.pow(10, 18)).toFixed(6),
+                });
+                // Check if usable balance is positive
+                if (usableBalance <= 0n) {
+                    logger_js_1.logger.warn(`[BUY AMOUNT] Dynamic mode: Insufficient balance after gas reserve`, {
+                        balance: balance.balance.toString(),
+                        gasReserve: gasReserve.toString(),
+                        usableBalance: usableBalance.toString(),
+                    });
+                    return null;
+                }
+                // 3. Get number of empty positions remaining
+                const emptyPositions = (0, storage_js_1.getEmptyPositions)(this.positions);
+                const emptyPositionCount = emptyPositions.length;
+                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Position analysis`, {
+                    totalPositions: Object.keys(this.positions).length,
+                    filledPositions: (0, storage_js_1.getFilledPositions)(this.positions).length,
+                    emptyPositions: emptyPositionCount,
+                    emptyPositionIds: emptyPositions.map(p => p.id),
+                });
+                // Check if there are any empty positions
+                if (emptyPositionCount === 0) {
+                    logger_js_1.logger.warn(`[BUY AMOUNT] Dynamic mode: No empty positions available for buy`);
+                    return null;
+                }
+                // 4. Calculate buy amount per position
+                const buyAmountUsd = usableBalance / BigInt(emptyPositionCount);
+                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Initial calculation`, {
+                    usableBalance: usableBalance.toString(),
+                    emptyPositionCount,
+                    buyAmountUsd: buyAmountUsd.toString(),
+                    buyAmountFormatted: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
+                });
+                // 5. Round to avoid decimals (round down to nearest 1e6 for precision)
+                const roundingFactor = BigInt(Math.pow(10, 6));
+                const roundedBuyAmount = (buyAmountUsd / roundingFactor) * roundingFactor;
+                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Rounding applied`, {
+                    unrounded: buyAmountUsd.toString(),
+                    roundingFactor: roundingFactor.toString(),
+                    rounded: roundedBuyAmount.toString(),
+                    roundedFormatted: (Number(roundedBuyAmount) / Math.pow(10, 18)).toFixed(6),
+                    roundingLoss: (buyAmountUsd - roundedBuyAmount).toString(),
+                });
+                // Final validation
+                if (roundedBuyAmount <= 0n) {
+                    logger_js_1.logger.warn(`[BUY AMOUNT] Dynamic mode: Calculated amount is zero or negative`, {
+                        usableBalance: usableBalance.toString(),
+                        emptyPositionCount,
+                        calculatedAmount: buyAmountUsd.toString(),
+                    });
+                    return null;
+                }
+                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Final calculated amount`, {
+                    buyAmountUsd: roundedBuyAmount.toString(),
+                    buyAmountFormatted: (Number(roundedBuyAmount) / Math.pow(10, 18)).toFixed(6),
+                    perPositionUsd: (Number(roundedBuyAmount) / Math.pow(10, 18)).toFixed(6),
+                    totalPositions: emptyPositionCount,
+                    totalAllocation: (Number(roundedBuyAmount) * emptyPositionCount / Math.pow(10, 18)).toFixed(6),
+                });
+                return roundedBuyAmount;
+            }
+            catch (error) {
+                logger_js_1.logger.error(`[BUY AMOUNT] Dynamic mode: Error calculating buy amount`, {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+            }
+        }
+        // Fallback (should never reach here due to type safety)
+        logger_js_1.logger.error(`[BUY AMOUNT] Unknown buy amount mode: ${config_js_1.botConfig.BUY_AMOUNT_MODE}`);
+        return null;
+    }
+    /**
      * Execute buy into a specific position
      */
     async executeBuy(position, currentPrice) {
         const symbol = position.symbol || 'WETH';
         const tokenAddress = position.tokenAddress || config_js_1.tokenConfig.wethAddress;
-        // Convert USDG amount to base units (USDG has 18 decimals)
-        const buyAmountUsd = BigInt(Math.floor(config_js_1.botConfig.GRID_SIZE_USD * Math.pow(10, 18)));
+        // Calculate buy amount based on configured mode
+        const buyAmountUsd = await this.calculateBuyAmount();
+        if (buyAmountUsd === null) {
+            logger_js_1.logger.warn(`[BUY EXECUTE] Buy skipped for position ${position.id}: Could not calculate buy amount`);
+            return;
+        }
+        logger_js_1.logger.info(`[BUY EXECUTE] Executing buy for position ${position.id}`, {
+            positionId: position.id,
+            mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
+            buyAmountUsd: buyAmountUsd.toString(),
+            buyAmountFormatted: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
+            currentPrice,
+        });
         const result = await this.swapUsdToToken(tokenAddress, buyAmountUsd);
         if (result.success && result.buyAmount) {
             // Update position with new balance and cost
@@ -323,11 +449,24 @@ class GridBot {
                 amount: buyAmountNum,
                 cost: currentPrice,
                 txHash: result.txHash,
+                mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
+                buyAmountUsd: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
             });
-            logger_js_1.logger.info(`Buy executed for position ${position.id}: ${result.txHash}`);
+            logger_js_1.logger.info(`[BUY EXECUTE] Buy successful for position ${position.id}`, {
+                positionId: position.id,
+                txHash: result.txHash,
+                mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
+                buyAmountUsd: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
+                tokensReceived: buyAmountNum,
+                costBasis: currentPrice,
+            });
         }
         else {
-            logger_js_1.logger.error(`Buy failed for position ${position.id}: ${result.error}`);
+            logger_js_1.logger.error(`[BUY EXECUTE] Buy failed for position ${position.id}`, {
+                positionId: position.id,
+                mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
+                error: result.error,
+            });
         }
     }
     /**

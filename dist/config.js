@@ -38,6 +38,18 @@ function parseGridMode(value, defaultValue) {
     return defaultValue;
 }
 /**
+ * Parse buy amount mode from environment variable
+ */
+function parseBuyAmountMode(value, defaultValue) {
+    if (value === undefined)
+        return defaultValue;
+    const validModes = ['static', 'dynamic'];
+    if (validModes.includes(value)) {
+        return value;
+    }
+    return defaultValue;
+}
+/**
  * Bot configuration from environment variables
  */
 exports.botConfig = {
@@ -57,6 +69,8 @@ exports.botConfig = {
     GRID_SPACING_PERCENT: parseNumber(process.env.GRID_SPACING_PERCENT, 3.72),
     GRID_MODE: parseGridMode(process.env.GRID_MODE, 'dynamic'),
     BANK_MIN_AMOUNT: parseNumber(process.env.BANK_MIN_AMOUNT, 0.5),
+    BUY_AMOUNT_MODE: parseBuyAmountMode(process.env.BUY_AMOUNT_MODE, 'static'),
+    GAS_RESERVE_ETH: parseNumber(process.env.GAS_RESERVE_ETH, 0.01),
 };
 /**
  * Wallet configuration from environment variables
@@ -98,6 +112,13 @@ function validateConfig() {
     if (!validModes.includes(exports.botConfig.GRID_MODE)) {
         errors.push(`GRID_MODE must be one of: ${validModes.join(', ')}`);
     }
+    const validBuyModes = ['static', 'dynamic'];
+    if (!validBuyModes.includes(exports.botConfig.BUY_AMOUNT_MODE)) {
+        errors.push(`BUY_AMOUNT_MODE must be one of: ${validBuyModes.join(', ')}`);
+    }
+    if (exports.botConfig.GAS_RESERVE_ETH < 0) {
+        errors.push('GAS_RESERVE_ETH must be non-negative');
+    }
     if (errors.length > 0) {
         throw new Error(`Configuration errors:\n${errors.join('\n')}`);
     }
@@ -124,6 +145,8 @@ function logConfig() {
             GRID_SPACING_PERCENT: exports.botConfig.GRID_SPACING_PERCENT,
             GRID_MODE: exports.botConfig.GRID_MODE,
             BANK_MIN_AMOUNT: exports.botConfig.BANK_MIN_AMOUNT,
+            BUY_AMOUNT_MODE: exports.botConfig.BUY_AMOUNT_MODE,
+            GAS_RESERVE_ETH: exports.botConfig.GAS_RESERVE_ETH,
         },
         wallet: {
             rpcUrl: exports.walletConfig.rpcUrl,

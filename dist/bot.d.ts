@@ -51,6 +51,15 @@ export declare class GridBot {
      */
     private checkPositionForSell;
     /**
+     * Calculate buy amount based on configured mode
+     *
+     * Static Mode: Use fixed GRID_SIZE_USD for every buy
+     * Dynamic Mode: Calculate buy amount based on available balance divided by empty positions
+     *
+     * @returns The calculated buy amount in base units (wei), or null if calculation fails
+     */
+    private calculateBuyAmount;
+    /**
      * Execute buy into a specific position
      */
     private executeBuy;
