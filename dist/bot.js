@@ -66,32 +66,72 @@ class GridBot {
         logger_js_1.logger.info('Bot stopped');
     }
     async checkAllPositions() {
-        // Get WETH balance (quote currency)
+        const timestamp = new Date().toISOString();
+        // Get balances
         const wethBal = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.wethAddress, this.account.address);
-        logger_js_1.logger.debug(`WETH: ${wethBal.formattedBalance}`);
+        const tokenBal = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.tradingTokenAddress, this.account.address);
         // Get trading token price in WETH
         const price = await (0, zeroX_js_1.getTokenPriceInWeth)(config_js_1.tokenConfig.tradingTokenAddress, config_js_1.tokenConfig.wethAddress);
         if (!price) {
-            logger_js_1.logger.warn('Could not get price');
+            logger_js_1.logger.warn(`[${timestamp}] Could not get price`);
             return;
         }
-        logger_js_1.logger.debug(`${config_js_1.tokenConfig.tradingTokenSymbol} price: ${price} WETH`);
-        // Check sells
-        for (const pos of (0, storage_js_1.getFilledPositions)(this.positions)) {
-            await this.checkSell(pos, price);
+        // Get position stats
+        const filled = (0, storage_js_1.getFilledPositions)(this.positions);
+        const empty = (0, storage_js_1.getEmptyPositions)(this.positions);
+        const totalPositions = Object.keys(this.positions).length;
+        // Calculate position value in WETH
+        const positionValueWeth = filled.reduce((sum, pos) => sum + (pos.balance * price), 0);
+        const wethBalance = parseFloat(wethBal.formattedBalance);
+        const totalValueWeth = wethBalance + positionValueWeth;
+        // VERBOSE ROUND SUMMARY (like original Python bot)
+        logger_js_1.logger.info(`\n═══════════════════════════════════════════════════════════`);
+        logger_js_1.logger.info(`[${timestamp}] ROUND SUMMARY`);
+        logger_js_1.logger.info(`═══════════════════════════════════════════════════════════`);
+        logger_js_1.logger.info(`💰 BALANCES:`);
+        logger_js_1.logger.info(`   WETH:        ${wethBalance.toFixed(6)} WETH`);
+        logger_js_1.logger.info(`   ${config_js_1.tokenConfig.tradingTokenSymbol}:        ${parseFloat(tokenBal.formattedBalance).toFixed(6)} tokens`);
+        logger_js_1.logger.info(`📊 PRICE:       1 ${config_js_1.tokenConfig.tradingTokenSymbol} = ${price.toFixed(8)} WETH`);
+        logger_js_1.logger.info(`📈 POSITIONS:   ${filled.length}/${totalPositions} filled | ${empty.length} empty`);
+        logger_js_1.logger.info(`💵 TOTAL VALUE: ${totalValueWeth.toFixed(6)} WETH`);
+        if (filled.length > 0) {
+            logger_js_1.logger.info(`🎯 POSITION DETAILS:`);
+            for (const pos of filled) {
+                const value = pos.balance * price;
+                const pnl = ((price - pos.costWeth) / pos.costWeth) * 100;
+                logger_js_1.logger.info(`   #${pos.id}: ${pos.balance.toFixed(4)} ${pos.symbol} @ ${pos.costWeth.toFixed(8)} | Value: ${value.toFixed(6)} WETH | PnL: ${pnl.toFixed(2)}%`);
+            }
+        }
+        if (config_js_1.botConfig.GRID_MODE === 'dynamic' && this.lastBuyPrice > 0) {
+            const nextBuyThreshold = this.lastBuyPrice * (1 - config_js_1.botConfig.GRID_SPACING_PERCENT / 100);
+            logger_js_1.logger.info(`📉 NEXT BUY:    When price drops to ${nextBuyThreshold.toFixed(8)} WETH (${config_js_1.botConfig.GRID_SPACING_PERCENT}% below last buy)`);
+        }
+        logger_js_1.logger.info(`═══════════════════════════════════════════════════════════\n`);
+        // Check sells first
+        if (config_js_1.botConfig.SELLS_ACTIVE && filled.length > 0) {
+            logger_js_1.logger.info(`🔍 Checking ${filled.length} filled positions for sell signals...`);
+            for (const pos of filled) {
+                await this.checkSell(pos, price);
+            }
         }
         // Check buys
-        if (config_js_1.botConfig.BUYS_ACTIVE && parseFloat(wethBal.formattedBalance) > 0) {
+        if (config_js_1.botConfig.BUYS_ACTIVE && wethBalance > 0) {
             if (config_js_1.botConfig.GRID_MODE === 'dynamic') {
+                logger_js_1.logger.info(`🔍 Checking for dynamic buy opportunity...`);
                 await this.checkDynamicBuy(price);
             }
-            else {
-                for (const pos of (0, storage_js_1.getEmptyPositions)(this.positions)) {
+            else if (empty.length > 0) {
+                logger_js_1.logger.info(`🔍 Checking ${empty.length} empty positions for buy signals...`);
+                for (const pos of empty) {
                     await this.checkBuy(pos, price);
                 }
             }
         }
+        else if (config_js_1.botConfig.BUYS_ACTIVE && wethBalance <= 0) {
+            logger_js_1.logger.warn(`⚠️  No WETH balance available for buys`);
+        }
         await (0, storage_js_1.savePositions)(this.positions);
+        logger_js_1.logger.info(`✅ Round complete. Waiting ${config_js_1.botConfig.CHECK_INTERVAL_MS / 1000}s...\n`);
     }
     async checkBuy(pos, price) {
         if (pos.balance !== 0)
