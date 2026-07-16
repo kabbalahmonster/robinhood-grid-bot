@@ -8,9 +8,14 @@ const zeroX_js_1 = require("./zeroX.js");
 const wallet_js_1 = require("./wallet.js");
 /**
  * Grid Trading Bot for Robinhood Chain
- * Supports pre-generated grid positions loaded from JSON
- * Supports auto-generated grid positions at startup
- * Supports dynamic on-demand positions (DCA on drops)
+ *
+ * ARCHITECTURE (like Python bot):
+ * - Quote Currency: WETH (like SOL in Python bot)
+ * - Trading Token: Configured ERC20 (e.g., PONS, COMPUTE)
+ * - Bank Currency: USDG
+ *
+ * Buy: WETH → TRADING_TOKEN
+ * Sell: TRADING_TOKEN → WETH (→ USDG if banking)
  */
 class GridBot {
     positions = {};
@@ -19,762 +24,236 @@ class GridBot {
     checkInterval = null;
     lastBuyPrice = 0;
     positionsCreated = 0;
-    /**
-     * Initialize the bot
-     */
     async initialize() {
         logger_js_1.logger.info('Initializing Grid Bot...');
         logger_js_1.logger.info('Wallet address:', { address: this.account.address });
-        // Log configuration
-        logger_js_1.logger.info('Bot configuration:', {
-            BANK_PROFIT: config_js_1.botConfig.BANK_PROFIT,
-            SELLS_ACTIVE: config_js_1.botConfig.SELLS_ACTIVE,
-            BUYS_ACTIVE: config_js_1.botConfig.BUYS_ACTIVE,
-            BANK_MOONBAG: config_js_1.botConfig.BANK_MOONBAG,
-            STOPLOSS_ACTIVE: config_js_1.botConfig.STOPLOSS_ACTIVE,
-            MAX_POSITIONS: config_js_1.botConfig.MAX_POSITIONS,
-            GRID_SPACING_PERCENT: config_js_1.botConfig.GRID_SPACING_PERCENT,
-            GRID_MODE: config_js_1.botConfig.GRID_MODE,
-            BUY_AMOUNT_MODE: config_js_1.botConfig.BUY_AMOUNT_MODE,
-            GAS_RESERVE_ETH: config_js_1.botConfig.GAS_RESERVE_ETH,
-            GRID_SIZE_USD: config_js_1.botConfig.GRID_SIZE_USD,
+        logger_js_1.logger.info('Trading:', {
+            token: config_js_1.tokenConfig.tradingTokenSymbol,
+            quote: 'WETH',
+            bank: 'USDG'
         });
-        // Handle different grid modes
+        // Load or generate positions
         if (config_js_1.botConfig.GRID_MODE === 'dynamic') {
-            // Dynamic mode: Start fresh, positions created on-demand
             this.positions = await (0, storage_js_1.loadPositions)();
             this.positionsCreated = Object.keys(this.positions).length;
-            // Find the last buy price from existing filled positions
-            const filledPositions = (0, storage_js_1.getFilledPositions)(this.positions);
-            if (filledPositions.length > 0) {
-                // Get the most recently created position with balance
-                const lastPosition = filledPositions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-                this.lastBuyPrice = lastPosition.cost;
-                logger_js_1.logger.info(`Dynamic mode: Found ${this.positionsCreated} existing positions, last buy at ${this.lastBuyPrice}`);
-            }
-            else {
-                logger_js_1.logger.info('Dynamic mode: Starting fresh, no existing positions');
-            }
-        }
-        else if (config_js_1.botConfig.GRID_MODE === 'autogenerate') {
-            // Auto-generate mode: Generate grid positions at startup
-            const currentPrice = await (0, zeroX_js_1.getTokenPriceInUsd)(config_js_1.tokenConfig.wethAddress, config_js_1.tokenConfig.wethAddress);
-            if (currentPrice) {
-                this.positions = await (0, storage_js_1.initializePositions)(true, currentPrice, config_js_1.botConfig.GRID_SIZE_USD, config_js_1.botConfig.GRID_SPACING_PERCENT, config_js_1.botConfig.MAX_POSITIONS, config_js_1.tokenConfig.wethAddress, 'WETH');
-                logger_js_1.logger.info(`Auto-generated ${Object.keys(this.positions).length} grid positions`);
-            }
-            else {
-                logger_js_1.logger.warn('Could not get current price for auto-generation, starting with empty positions');
-                this.positions = {};
+            const filled = (0, storage_js_1.getFilledPositions)(this.positions);
+            if (filled.length > 0) {
+                const last = filled.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+                this.lastBuyPrice = last.cost;
             }
         }
         else {
-            // Pregenerated mode: Load positions from positions.json
-            this.positions = await (0, storage_js_1.loadPositions)();
-            const positionCount = Object.keys(this.positions).length;
-            logger_js_1.logger.info(`Pregenerated mode: Loaded ${positionCount} positions from storage`);
-        }
-        // Log loaded positions summary
-        const positionCount = Object.keys(this.positions).length;
-        if (positionCount > 0) {
-            const filledPositions = (0, storage_js_1.getFilledPositions)(this.positions);
-            const emptyPositions = (0, storage_js_1.getEmptyPositions)(this.positions);
-            logger_js_1.logger.info('Positions summary:', {
-                total: positionCount,
-                filled: filledPositions.length,
-                empty: emptyPositions.length,
-            });
+            const price = await (0, zeroX_js_1.getTokenPriceInWeth)(config_js_1.tokenConfig.tradingTokenAddress, config_js_1.tokenConfig.wethAddress);
+            if (price) {
+                this.positions = await (0, storage_js_1.initializePositions)(true, price, config_js_1.botConfig.GRID_SIZE_USD, config_js_1.botConfig.GRID_SPACING_PERCENT, config_js_1.botConfig.MAX_POSITIONS, config_js_1.tokenConfig.tradingTokenAddress, config_js_1.tokenConfig.tradingTokenSymbol);
+            }
         }
     }
-    /**
-     * Start the bot
-     */
     async start() {
-        if (this.running) {
-            logger_js_1.logger.warn('Bot is already running');
+        if (this.running)
             return;
-        }
         this.running = true;
         logger_js_1.logger.info('Starting Grid Bot...');
-        // Run initial check
         await this.checkAllPositions();
-        // Set up interval for regular checks
         this.checkInterval = setInterval(() => {
-            this.checkAllPositions().catch((error) => {
-                logger_js_1.logger.error('Error in position check:', error);
-            });
+            this.checkAllPositions().catch(e => logger_js_1.logger.error('Check error:', e));
         }, config_js_1.botConfig.CHECK_INTERVAL_MS);
-        logger_js_1.logger.info(`Bot started. Checking every ${config_js_1.botConfig.CHECK_INTERVAL_MS}ms`);
     }
-    /**
-     * Stop the bot
-     */
     async stop() {
         this.running = false;
-        if (this.checkInterval) {
+        if (this.checkInterval)
             clearInterval(this.checkInterval);
-            this.checkInterval = null;
-        }
         logger_js_1.logger.info('Bot stopped');
     }
-    /**
-     * Check all positions and execute trades as needed
-     * New behavior: Check ALL empty positions for buy opportunities
-     * Check ALL filled positions for sell/stoploss conditions
-     * Dynamic mode: Create positions on-demand when price drops
-     */
     async checkAllPositions() {
-        const timestamp = new Date().toISOString();
-        logger_js_1.logger.debug(`=== Checking positions at ${timestamp} ===`);
-        // Get current USDG balance for potential buys
-        const usdgBalance = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.usdgAddress, this.account.address);
-        logger_js_1.logger.debug(`USDG Balance: ${usdgBalance.formattedBalance}`);
-        // Get current price for the target token (WETH)
-        const currentPrice = await (0, zeroX_js_1.getTokenPriceInUsd)(config_js_1.tokenConfig.wethAddress, config_js_1.tokenConfig.wethAddress);
-        if (currentPrice === null) {
-            logger_js_1.logger.warn('Could not get current price, skipping check');
+        // Get WETH balance (quote currency)
+        const wethBal = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.wethAddress, this.account.address);
+        logger_js_1.logger.debug(`WETH: ${wethBal.formattedBalance}`);
+        // Get trading token price in WETH
+        const price = await (0, zeroX_js_1.getTokenPriceInWeth)(config_js_1.tokenConfig.tradingTokenAddress, config_js_1.tokenConfig.wethAddress);
+        if (!price) {
+            logger_js_1.logger.warn('Could not get price');
             return;
         }
-        logger_js_1.logger.debug(`Current price: ${currentPrice}`);
-        // Check ALL filled positions for sell/stoploss opportunities
-        const filledPositions = (0, storage_js_1.getFilledPositions)(this.positions);
-        logger_js_1.logger.debug(`Checking ${filledPositions.length} filled positions for sell conditions`);
-        for (const position of filledPositions) {
-            await this.checkPositionForSell(position, currentPrice);
+        logger_js_1.logger.debug(`${config_js_1.tokenConfig.tradingTokenSymbol} price: ${price} WETH`);
+        // Check sells
+        for (const pos of (0, storage_js_1.getFilledPositions)(this.positions)) {
+            await this.checkSell(pos, price);
         }
-        // Handle buys based on grid mode
-        if (config_js_1.botConfig.BUYS_ACTIVE && parseFloat(usdgBalance.formattedBalance) >= config_js_1.botConfig.GRID_SIZE_USD) {
+        // Check buys
+        if (config_js_1.botConfig.BUYS_ACTIVE && parseFloat(wethBal.formattedBalance) > 0) {
             if (config_js_1.botConfig.GRID_MODE === 'dynamic') {
-                // Dynamic mode: Create positions on-demand
-                await this.checkDynamicBuyOpportunity(currentPrice);
+                await this.checkDynamicBuy(price);
             }
             else {
-                // Pregenerated/Autogenerate mode: Check existing empty positions
-                const emptyPositions = (0, storage_js_1.getEmptyPositions)(this.positions);
-                logger_js_1.logger.debug(`Checking ${emptyPositions.length} empty positions for buy opportunities`);
-                for (const position of emptyPositions) {
-                    await this.checkPositionForBuy(position, currentPrice);
+                for (const pos of (0, storage_js_1.getEmptyPositions)(this.positions)) {
+                    await this.checkBuy(pos, price);
                 }
             }
         }
-        // Save positions after all checks
         await (0, storage_js_1.savePositions)(this.positions);
     }
-    /**
-     * Check a single position for buy conditions
-     * Buy logic: If position is empty (balance=0) and current price is within buyMin-buyMax range
-     */
-    async checkPositionForBuy(position, currentPrice) {
-        try {
-            // Only check empty positions
-            if (position.balance !== 0) {
-                return;
-            }
-            logger_js_1.logger.debug(`Checking buy for position ${position.id}`, {
-                currentPrice,
-                buyMin: position.buyMin,
-                buyMax: position.buyMax,
-            });
-            // Check if current price is within buy range
-            if (currentPrice >= position.buyMin && currentPrice <= position.buyMax) {
-                logger_js_1.logger.info(`Buy opportunity found for position ${position.id}!`, {
-                    currentPrice,
-                    buyMin: position.buyMin,
-                    buyMax: position.buyMax,
-                });
-                await this.executeBuy(position, currentPrice);
-            }
-        }
-        catch (error) {
-            logger_js_1.logger.error(`Error checking buy for position ${position.id}:`, error);
+    async checkBuy(pos, price) {
+        if (pos.balance !== 0)
+            return;
+        if (price >= pos.buyMin && price <= pos.buyMax) {
+            logger_js_1.logger.info(`Buy trigger: position ${pos.id} at ${price} WETH`);
+            await this.executeBuy(pos, price);
         }
     }
-    /**
-     * Dynamic mode: Check for buy opportunities based on price drops
-     * Creates new positions on-demand when price drops by GRID_SPACING_PERCENT
-     */
-    async checkDynamicBuyOpportunity(currentPrice) {
-        try {
-            const dropPercent = config_js_1.botConfig.GRID_SPACING_PERCENT;
-            // First buy - create position 1 at current price
-            if (this.positionsCreated === 0) {
-                logger_js_1.logger.info(`Dynamic mode: First buy at ${currentPrice}`, {
-                    dropPercent,
-                    maxPositions: config_js_1.botConfig.MAX_POSITIONS,
-                });
-                await this.createAndBuyPosition(currentPrice);
-                this.lastBuyPrice = currentPrice;
-                return;
-            }
-            // Subsequent buys - check if price dropped enough from last buy
-            const dropThreshold = this.lastBuyPrice * (1 - dropPercent / 100);
-            logger_js_1.logger.debug(`Dynamic mode: Checking drop`, {
-                currentPrice,
-                lastBuyPrice: this.lastBuyPrice,
-                dropThreshold,
-                dropPercent,
-                positionsCreated: this.positionsCreated,
-                maxPositions: config_js_1.botConfig.MAX_POSITIONS,
-            });
-            if (currentPrice <= dropThreshold && this.positionsCreated < config_js_1.botConfig.MAX_POSITIONS) {
-                logger_js_1.logger.info(`Dynamic mode: Price dropped ${dropPercent}% from ${this.lastBuyPrice} to ${currentPrice}, creating position ${this.positionsCreated + 1}`);
-                await this.createAndBuyPosition(currentPrice);
-                this.lastBuyPrice = currentPrice;
-            }
+    async checkSell(pos, price) {
+        if (pos.balance <= 0)
+            return;
+        // Stop loss
+        if (config_js_1.botConfig.STOPLOSS_ACTIVE && price <= pos.stoploss) {
+            logger_js_1.logger.warn(`Stop loss: position ${pos.id} at ${price} WETH`);
+            await this.executeSell(pos, price, true);
+            return;
         }
-        catch (error) {
-            logger_js_1.logger.error('Error in dynamic buy check:', error);
+        // Profit target
+        if (config_js_1.botConfig.SELLS_ACTIVE && price >= pos.sellMin) {
+            logger_js_1.logger.info(`Profit target: position ${pos.id} at ${price} WETH`);
+            await this.executeSell(pos, price, false);
         }
     }
-    /**
-     * Dynamic mode: Create a new position and execute buy
-     */
-    async createAndBuyPosition(currentPrice) {
-        const id = (this.positionsCreated + 1).toString();
-        const profitPercent = config_js_1.botConfig.PROFIT_THRESHOLD_PERCENT;
-        const stoplossPercent = Math.abs(config_js_1.botConfig.STOPLOSS_PERCENTAGE);
-        const sellMin = currentPrice * (1 + profitPercent / 100);
-        const stoploss = currentPrice * (1 - stoplossPercent / 100);
-        const position = {
+    async checkDynamicBuy(price) {
+        if (this.positionsCreated === 0) {
+            await this.createAndBuy(price);
+            this.lastBuyPrice = price;
+            return;
+        }
+        const threshold = this.lastBuyPrice * (1 - config_js_1.botConfig.GRID_SPACING_PERCENT / 100);
+        if (price <= threshold && this.positionsCreated < config_js_1.botConfig.MAX_POSITIONS) {
+            await this.createAndBuy(price);
+            this.lastBuyPrice = price;
+        }
+    }
+    async createAndBuy(price) {
+        const id = String(++this.positionsCreated);
+        const pos = {
             id,
             balance: 0,
             cost: 0,
-            buyMin: currentPrice * 0.99, // Bought at current
-            buyMax: currentPrice * 1.01,
-            sellMin,
-            stoploss,
-            tokenAddress: config_js_1.tokenConfig.wethAddress,
-            symbol: 'WETH',
+            costWeth: 0,
+            buyMin: price * 0.99,
+            buyMax: price * 1.01,
+            sellMin: price * (1 + config_js_1.botConfig.PROFIT_THRESHOLD_PERCENT / 100),
+            stoploss: price * (1 + config_js_1.botConfig.STOPLOSS_PERCENTAGE / 100),
+            tokenAddress: config_js_1.tokenConfig.tradingTokenAddress,
+            symbol: config_js_1.tokenConfig.tradingTokenSymbol,
             createdAt: Date.now(),
+            lastBuyAt: undefined,
         };
-        // Save position first
-        this.positions = await (0, storage_js_1.savePosition)(this.positions, position);
-        // Execute the buy
-        await this.executeBuy(position, currentPrice);
-        // Update tracking
-        this.positionsCreated++;
-        logger_js_1.logger.info(`Dynamic mode: Created and bought position ${id} at ${currentPrice}`, {
-            sellMin,
-            stoploss,
-            positionsCreated: this.positionsCreated,
-        });
+        this.positions = await (0, storage_js_1.savePosition)(this.positions, pos);
+        await this.executeBuy(pos, price);
     }
-    /**
-     * Check a single position for sell conditions
-     * Sell logic: If position has balance and current price hits sellMin or stoploss
-     */
-    async checkPositionForSell(position, currentPrice) {
-        try {
-            // Only check filled positions
-            if (position.balance <= 0) {
-                return;
-            }
-            const costBasis = position.cost;
-            const profitPercent = costBasis > 0 ? ((currentPrice - costBasis) / costBasis) * 100 : 0;
-            logger_js_1.logger.debug(`Checking sell for position ${position.id}`, {
-                currentPrice,
-                costBasis,
-                profitPercent: profitPercent.toFixed(2) + '%',
-                sellMin: position.sellMin,
-                stoploss: position.stoploss,
-            });
-            // Check stop loss first (highest priority)
-            if (config_js_1.botConfig.STOPLOSS_ACTIVE && currentPrice <= position.stoploss) {
-                logger_js_1.logger.warn(`STOP LOSS triggered for position ${position.id}!`, {
-                    currentPrice,
-                    stoploss: position.stoploss,
-                    loss: profitPercent.toFixed(2) + '%',
-                });
-                await this.executeStopLoss(position);
-                return;
-            }
-            // Check profit target
-            if (config_js_1.botConfig.SELLS_ACTIVE && currentPrice >= position.sellMin) {
-                logger_js_1.logger.info(`Profit target reached for position ${position.id}!`, {
-                    currentPrice,
-                    target: position.sellMin,
-                    profit: profitPercent.toFixed(2) + '%',
-                });
-                await this.executeSell(position, currentPrice);
-            }
-        }
-        catch (error) {
-            logger_js_1.logger.error(`Error checking sell for position ${position.id}:`, error);
-        }
-    }
-    /**
-     * Calculate buy amount based on configured mode
-     *
-     * Static Mode: Use fixed GRID_SIZE_USD for every buy
-     * Dynamic Mode: Calculate buy amount based on available balance divided by empty positions
-     *
-     * @returns The calculated buy amount in base units (wei), or null if calculation fails
-     */
-    async calculateBuyAmount() {
-        logger_js_1.logger.info(`[BUY AMOUNT] Calculating buy amount using ${config_js_1.botConfig.BUY_AMOUNT_MODE} mode`);
-        // Static Mode: Use fixed GRID_SIZE_USD
+    async executeBuy(pos, price) {
+        // Calculate WETH amount to spend
+        let wethAmount;
         if (config_js_1.botConfig.BUY_AMOUNT_MODE === 'static') {
-            const buyAmountUsd = BigInt(Math.floor(config_js_1.botConfig.GRID_SIZE_USD * Math.pow(10, 18)));
-            logger_js_1.logger.info(`[BUY AMOUNT] Static mode: Using fixed GRID_SIZE_USD`, {
-                gridSizeUsd: config_js_1.botConfig.GRID_SIZE_USD,
-                buyAmountUsd: buyAmountUsd.toString(),
-                buyAmountFormatted: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
-            });
-            return buyAmountUsd;
+            // Rough USD to WETH conversion
+            wethAmount = BigInt(Math.floor(config_js_1.botConfig.GRID_SIZE_USD / 2000 * 1e18));
         }
-        // Dynamic Mode: Calculate based on available balance
-        if (config_js_1.botConfig.BUY_AMOUNT_MODE === 'dynamic') {
-            try {
-                // 1. Get wallet balance (USDG)
-                const balance = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.usdgAddress, this.account.address);
-                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Retrieved wallet balance`, {
-                    address: this.account.address,
-                    rawBalance: balance.balance.toString(),
-                    formattedBalance: balance.formattedBalance,
-                    decimals: balance.decimals,
-                });
-                // 2. Subtract gas reserve (convert ETH to USDG equivalent, assuming 1:1 for simplicity)
-                // Note: USDG has 18 decimals like ETH
-                const gasReserve = BigInt(Math.floor(config_js_1.botConfig.GAS_RESERVE_ETH * Math.pow(10, 18)));
-                const usableBalance = balance.balance - gasReserve;
-                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Gas reserve calculation`, {
-                    gasReserveEth: config_js_1.botConfig.GAS_RESERVE_ETH,
-                    gasReserveWei: gasReserve.toString(),
-                    rawBalance: balance.balance.toString(),
-                    usableBalance: usableBalance.toString(),
-                    usableBalanceFormatted: (Number(usableBalance) / Math.pow(10, 18)).toFixed(6),
-                });
-                // Check if usable balance is positive
-                if (usableBalance <= 0n) {
-                    logger_js_1.logger.warn(`[BUY AMOUNT] Dynamic mode: Insufficient balance after gas reserve`, {
-                        balance: balance.balance.toString(),
-                        gasReserve: gasReserve.toString(),
-                        usableBalance: usableBalance.toString(),
-                    });
-                    return null;
-                }
-                // 3. Get number of empty positions remaining
-                const emptyPositions = (0, storage_js_1.getEmptyPositions)(this.positions);
-                const emptyPositionCount = emptyPositions.length;
-                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Position analysis`, {
-                    totalPositions: Object.keys(this.positions).length,
-                    filledPositions: (0, storage_js_1.getFilledPositions)(this.positions).length,
-                    emptyPositions: emptyPositionCount,
-                    emptyPositionIds: emptyPositions.map(p => p.id),
-                });
-                // Check if there are any empty positions
-                if (emptyPositionCount === 0) {
-                    logger_js_1.logger.warn(`[BUY AMOUNT] Dynamic mode: No empty positions available for buy`);
-                    return null;
-                }
-                // 4. Calculate buy amount per position
-                const buyAmountUsd = usableBalance / BigInt(emptyPositionCount);
-                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Initial calculation`, {
-                    usableBalance: usableBalance.toString(),
-                    emptyPositionCount,
-                    buyAmountUsd: buyAmountUsd.toString(),
-                    buyAmountFormatted: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
-                });
-                // 5. Round to avoid decimals (round down to nearest 1e6 for precision)
-                const roundingFactor = BigInt(Math.pow(10, 6));
-                const roundedBuyAmount = (buyAmountUsd / roundingFactor) * roundingFactor;
-                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Rounding applied`, {
-                    unrounded: buyAmountUsd.toString(),
-                    roundingFactor: roundingFactor.toString(),
-                    rounded: roundedBuyAmount.toString(),
-                    roundedFormatted: (Number(roundedBuyAmount) / Math.pow(10, 18)).toFixed(6),
-                    roundingLoss: (buyAmountUsd - roundedBuyAmount).toString(),
-                });
-                // Final validation
-                if (roundedBuyAmount <= 0n) {
-                    logger_js_1.logger.warn(`[BUY AMOUNT] Dynamic mode: Calculated amount is zero or negative`, {
-                        usableBalance: usableBalance.toString(),
-                        emptyPositionCount,
-                        calculatedAmount: buyAmountUsd.toString(),
-                    });
-                    return null;
-                }
-                logger_js_1.logger.info(`[BUY AMOUNT] Dynamic mode: Final calculated amount`, {
-                    buyAmountUsd: roundedBuyAmount.toString(),
-                    buyAmountFormatted: (Number(roundedBuyAmount) / Math.pow(10, 18)).toFixed(6),
-                    perPositionUsd: (Number(roundedBuyAmount) / Math.pow(10, 18)).toFixed(6),
-                    totalPositions: emptyPositionCount,
-                    totalAllocation: (Number(roundedBuyAmount) * emptyPositionCount / Math.pow(10, 18)).toFixed(6),
-                });
-                return roundedBuyAmount;
-            }
-            catch (error) {
-                logger_js_1.logger.error(`[BUY AMOUNT] Dynamic mode: Error calculating buy amount`, {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-                return null;
-            }
+        else {
+            // Dynamic: divide WETH balance by empty positions
+            const bal = await (0, wallet_js_1.getTokenBalance)(config_js_1.tokenConfig.wethAddress, this.account.address);
+            const gasReserve = BigInt(Math.floor(config_js_1.botConfig.GAS_RESERVE_ETH * 1e18));
+            const usable = bal.balance - gasReserve;
+            const empty = (0, storage_js_1.getEmptyPositions)(this.positions).length || 1;
+            wethAmount = (usable / BigInt(empty) / BigInt(1e6)) * BigInt(1e6);
         }
-        // Fallback (should never reach here due to type safety)
-        logger_js_1.logger.error(`[BUY AMOUNT] Unknown buy amount mode: ${config_js_1.botConfig.BUY_AMOUNT_MODE}`);
-        return null;
-    }
-    /**
-     * Execute buy into a specific position
-     */
-    async executeBuy(position, currentPrice) {
-        const symbol = position.symbol || 'WETH';
-        const tokenAddress = position.tokenAddress || config_js_1.tokenConfig.wethAddress;
-        // Calculate buy amount based on configured mode
-        const buyAmountUsd = await this.calculateBuyAmount();
-        if (buyAmountUsd === null) {
-            logger_js_1.logger.warn(`[BUY EXECUTE] Buy skipped for position ${position.id}: Could not calculate buy amount`);
+        if (wethAmount <= 0n) {
+            logger_js_1.logger.warn('Insufficient WETH for buy');
             return;
         }
-        logger_js_1.logger.info(`[BUY EXECUTE] Executing buy for position ${position.id}`, {
-            positionId: position.id,
-            mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
-            buyAmountUsd: buyAmountUsd.toString(),
-            buyAmountFormatted: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
-            currentPrice,
-        });
-        const result = await this.swapUsdToToken(tokenAddress, buyAmountUsd);
+        logger_js_1.logger.info(`Buying ${pos.id}: ${Number(wethAmount) / 1e18} WETH → ${config_js_1.tokenConfig.tradingTokenSymbol}`);
+        // Get quote: WETH → Trading Token
+        const quote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.wethAddress, config_js_1.tokenConfig.tradingTokenAddress, wethAmount.toString(), undefined, this.account.address);
+        if (!quote) {
+            logger_js_1.logger.error('Failed to get buy quote');
+            return;
+        }
+        const result = await (0, wallet_js_1.executeSwap)(quote, this.account);
         if (result.success && result.buyAmount) {
-            // Update position with new balance and cost
-            const buyAmountNum = Number(result.buyAmount) / Math.pow(10, 18); // Assuming 18 decimals
-            const updatedPosition = {
-                ...position,
-                balance: buyAmountNum,
-                cost: currentPrice,
-                lastBuyAt: Date.now(),
-            };
-            this.positions = await (0, storage_js_1.savePosition)(this.positions, updatedPosition);
-            (0, logger_js_1.logTrade)('BUY', symbol, {
-                positionId: position.id,
-                amount: buyAmountNum,
-                cost: currentPrice,
-                txHash: result.txHash,
-                mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
-                buyAmountUsd: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
+            const tokens = Number(result.buyAmount) / 1e18;
+            const updated = { ...pos, balance: tokens, costWeth: price, cost: price, lastBuyAt: Date.now() };
+            this.positions = await (0, storage_js_1.savePosition)(this.positions, updated);
+            (0, logger_js_1.logTrade)('BUY', pos.symbol || config_js_1.tokenConfig.tradingTokenSymbol, {
+                positionId: pos.id, amount: tokens, costWeth: price, txHash: result.txHash
             });
-            logger_js_1.logger.info(`[BUY EXECUTE] Buy successful for position ${position.id}`, {
-                positionId: position.id,
-                txHash: result.txHash,
-                mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
-                buyAmountUsd: (Number(buyAmountUsd) / Math.pow(10, 18)).toFixed(6),
-                tokensReceived: buyAmountNum,
-                costBasis: currentPrice,
-            });
+            logger_js_1.logger.info(`Buy success: ${result.txHash}`);
         }
         else {
-            logger_js_1.logger.error(`[BUY EXECUTE] Buy failed for position ${position.id}`, {
-                positionId: position.id,
-                mode: config_js_1.botConfig.BUY_AMOUNT_MODE,
-                error: result.error,
-            });
+            logger_js_1.logger.error(`Buy failed: ${result.error}`);
         }
     }
-    /**
-     * Execute stop loss sell for a specific position
-     * Validates quote output is reasonable before executing (no extreme slippage)
-     */
-    async executeStopLoss(position) {
-        const symbol = position.symbol || 'WETH';
-        const tokenAddress = position.tokenAddress || config_js_1.tokenConfig.wethAddress;
-        // Calculate token amount to sell based on position balance
-        const tokenDecimals = 18; // Assuming 18 decimals
-        const sellAmount = BigInt(Math.floor(position.balance * Math.pow(10, tokenDecimals)));
-        if (sellAmount <= 0n) {
-            logger_js_1.logger.warn(`[STOPLOSS CHECK] No balance to sell for position ${position.id}`);
-            return;
+    async executeSell(pos, price, isStoploss) {
+        const tokenDecimals = 18;
+        const totalBal = BigInt(Math.floor(pos.balance * 10 ** tokenDecimals));
+        // Apply moonbag
+        let sellAmount = totalBal;
+        let moonbag = 0n;
+        if (!isStoploss && config_js_1.botConfig.BANK_MOONBAG && config_js_1.botConfig.MOONBAG_PERCENTAGE > 0) {
+            moonbag = (totalBal * BigInt(config_js_1.botConfig.MOONBAG_PERCENTAGE)) / 100n;
+            sellAmount = totalBal - moonbag;
         }
-        // ============================================================================
-        // STOPLOSS VALIDATION: Get quote first to verify reasonable output
-        // ============================================================================
-        logger_js_1.logger.info(`[STOPLOSS CHECK] Getting stoploss quote for position ${position.id}`, {
-            positionId: position.id,
-            costBasis: position.cost,
-            balance: position.balance,
-            sellAmount: Number(sellAmount) / Math.pow(10, tokenDecimals),
-            stoplossPrice: position.stoploss,
-        });
-        // 1. Get quote first (before executing swap)
-        const quote = await (0, zeroX_js_1.getQuote)(tokenAddress, config_js_1.tokenConfig.usdgAddress, sellAmount.toString(), undefined, this.account.address);
+        if (sellAmount <= 0n)
+            return;
+        // Get quote: Trading Token → WETH
+        const quote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.tradingTokenAddress, config_js_1.tokenConfig.wethAddress, sellAmount.toString(), undefined, this.account.address);
         if (!quote) {
-            logger_js_1.logger.error(`[STOPLOSS CHECK] Failed to get quote for position ${position.id}, skipping stoploss`);
+            logger_js_1.logger.error('Failed to get sell quote');
             return;
         }
-        // 2. Calculate expected output based on stoploss price
-        // For stoploss, we expect at least 85% of theoretical value (allows for reasonable slippage)
-        const theoreticalValueUsd = position.stoploss * position.balance;
-        const quoteOutputUsd = Number(quote.buyAmount) / Math.pow(10, tokenDecimals);
-        const minAcceptableOutput = theoreticalValueUsd * 0.85; // 85% of stoploss value
-        const maxAllowedSlippagePercent = 15;
-        // 3. Log detailed comparison
-        logger_js_1.logger.info(`[STOPLOSS CHECK] Stoploss quote analysis for position ${position.id}:`, {
-            positionId: position.id,
-            costBasis: position.cost,
-            stoplossPrice: position.stoploss,
-            theoreticalValueUsd,
-            quoteOutputUsd,
-            minAcceptableOutput,
-            maxAllowedSlippagePercent,
-            meetsThreshold: quoteOutputUsd >= minAcceptableOutput,
-            estimatedPriceImpact: quote.estimatedPriceImpact,
-            grossPrice: quote.grossPrice,
-            netPrice: quote.netPrice,
-            lossFromCostBasis: ((quoteOutputUsd - (position.cost * position.balance)) / (position.cost * position.balance)) * 100,
-        });
-        // 4. Validate quote is reasonable (not extreme slippage)
-        if (quoteOutputUsd < minAcceptableOutput) {
-            logger_js_1.logger.warn(`[STOPLOSS CHECK] Stoploss VALIDATION WARNING for position ${position.id}: High slippage detected`, {
-                positionId: position.id,
-                quoteOutputUsd,
-                minAcceptableOutput,
-                shortfall: minAcceptableOutput - quoteOutputUsd,
-                shortfallPercent: ((minAcceptableOutput - quoteOutputUsd) / minAcceptableOutput) * 100,
-                reason: 'Quote output is significantly below stoploss price (possible high slippage)',
-            });
-            // Note: For stoploss, we may still want to execute to prevent further losses,
-            // but we log a strong warning. The bot operator can decide to block here if needed.
-            // For now, we proceed but with clear warning.
+        // Profit check (not for stoploss)
+        const wethOut = Number(quote.buyAmount) / 1e18;
+        const tokensSold = Number(sellAmount) / 1e18;
+        const costTotal = pos.costWeth * tokensSold;
+        const minRequired = costTotal * config_js_1.botConfig.MIN_PROFIT;
+        if (!isStoploss && wethOut <= minRequired) {
+            logger_js_1.logger.warn(`Sell blocked: quote ${wethOut} WETH < required ${minRequired} WETH`);
+            return;
         }
-        logger_js_1.logger.info(`[STOPLOSS CHECK] Stoploss EXECUTING for position ${position.id}`, {
-            positionId: position.id,
-            quoteOutputUsd,
-            theoreticalValueUsd,
-            slippagePercent: ((theoreticalValueUsd - quoteOutputUsd) / theoreticalValueUsd) * 100,
-        });
-        // ============================================================================
-        // Execute the stoploss
-        // ============================================================================
+        logger_js_1.logger.info(`Selling ${pos.id}: ${tokensSold} ${pos.symbol} → ${wethOut} WETH`);
         const result = await (0, wallet_js_1.executeSwap)(quote, this.account);
         if (result.success) {
-            // Reset position to empty state
-            const updatedPosition = {
-                ...position,
-                balance: 0,
-                cost: 0,
-                lastBuyAt: undefined,
-            };
-            this.positions = await (0, storage_js_1.savePosition)(this.positions, updatedPosition);
-            (0, logger_js_1.logTrade)('STOPLOSS', symbol, {
-                positionId: position.id,
-                balance: position.balance,
-                cost: position.cost,
-                quoteOutputUsd,
-                theoreticalValueUsd,
-                slippagePercent: ((theoreticalValueUsd - quoteOutputUsd) / theoreticalValueUsd) * 100,
-                txHash: result.txHash,
-            });
-            logger_js_1.logger.info(`[STOPLOSS CHECK] Stoploss EXECUTED for position ${position.id}: ${result.txHash}`, {
-                positionId: position.id,
-                txHash: result.txHash,
-                quoteOutputUsd,
-                lossPercent: ((quoteOutputUsd - (position.cost * position.balance)) / (position.cost * position.balance)) * 100,
-            });
-        }
-        else {
-            logger_js_1.logger.error(`[STOPLOSS CHECK] Stoploss execution FAILED for position ${position.id}: ${result.error}`, {
-                positionId: position.id,
-                error: result.error,
-            });
-        }
-    }
-    /**
-     * Execute profit-taking sell for a specific position
-     * STRICT PROFIT CHECK: Verifies quote output meets profit threshold before executing
-     */
-    async executeSell(position, currentPrice) {
-        const symbol = position.symbol || 'WETH';
-        const tokenAddress = position.tokenAddress || config_js_1.tokenConfig.wethAddress;
-        // Calculate token amount to sell based on position balance
-        const tokenDecimals = 18; // Assuming 18 decimals
-        const totalBalance = BigInt(Math.floor(position.balance * Math.pow(10, tokenDecimals)));
-        if (totalBalance <= 0n) {
-            logger_js_1.logger.warn(`No balance to sell for position ${position.id}`);
-            return;
-        }
-        // Calculate sell amount (considering moonbag)
-        let sellAmount = totalBalance;
-        let moonbagAmount = 0n;
-        if (config_js_1.botConfig.BANK_MOONBAG && config_js_1.botConfig.MOONBAG_PERCENTAGE > 0) {
-            moonbagAmount = (totalBalance * BigInt(config_js_1.botConfig.MOONBAG_PERCENTAGE)) / 100n;
-            sellAmount = totalBalance - moonbagAmount;
-            logger_js_1.logger.info(`Keeping moonbag for position ${position.id}:`, {
-                percentage: config_js_1.botConfig.MOONBAG_PERCENTAGE,
-                amount: Number(moonbagAmount) / Math.pow(10, tokenDecimals),
-            });
-        }
-        // Check BANK_MIN_AMOUNT before proceeding with sell
-        const sellAmountTokens = Number(sellAmount) / Math.pow(10, tokenDecimals);
-        if (config_js_1.botConfig.BANK_PROFIT && sellAmountTokens < config_js_1.botConfig.BANK_MIN_AMOUNT) {
-            logger_js_1.logger.warn(`[BANK CHECK] Sell BLOCKED for position ${position.id}: Amount below BANK_MIN_AMOUNT`, {
-                positionId: position.id,
-                sellAmount: sellAmountTokens,
-                bankMinAmount: config_js_1.botConfig.BANK_MIN_AMOUNT,
-                reason: 'Sell amount is below minimum banking threshold',
-            });
-            return;
-        }
-        // ============================================================================
-        // STRICT PROFIT CHECK: Get quote first before executing swap
-        // ============================================================================
-        logger_js_1.logger.info(`[PROFIT CHECK] Getting sell quote for position ${position.id}`, {
-            positionId: position.id,
-            costBasis: position.cost,
-            currentPrice,
-            sellAmount: Number(sellAmount) / Math.pow(10, tokenDecimals),
-            tokenDecimals,
-        });
-        // 1. Get quote first (before executing swap)
-        const quote = await (0, zeroX_js_1.getQuote)(tokenAddress, config_js_1.tokenConfig.usdgAddress, sellAmount.toString(), undefined, this.account.address);
-        if (!quote) {
-            logger_js_1.logger.error(`[PROFIT CHECK] Failed to get quote for position ${position.id}, skipping sell`);
-            return;
-        }
-        // 2. Calculate minimum required output for profitable sell
-        // Convert cost basis to USDG (position.cost is in USD terms)
-        const costBasisUsd = position.cost * (Number(sellAmount) / Math.pow(10, tokenDecimals));
-        // MIN_PROFIT is the minimum acceptable profit multiplier (e.g., 1.08 = 8% minimum profit)
-        // This is distinct from PROFIT_THRESHOLD_PERCENT which triggers the sell check
-        const minProfitMultiplier = config_js_1.botConfig.MIN_PROFIT;
-        const minRequiredOutput = costBasisUsd * minProfitMultiplier;
-        // Quote output is in base units (18 decimals for USDG)
-        const quoteOutputUsd = Number(quote.buyAmount) / Math.pow(10, tokenDecimals);
-        // 3. Log detailed comparison
-        logger_js_1.logger.info(`[PROFIT CHECK] Sell quote analysis for position ${position.id}:`, {
-            positionId: position.id,
-            costBasis: position.cost,
-            costBasisUsd,
-            sellTokenAmount: Number(sellAmount) / Math.pow(10, tokenDecimals),
-            quoteOutputUsd,
-            minRequiredOutput,
-            profitThresholdPercent: config_js_1.botConfig.PROFIT_THRESHOLD_PERCENT,
-            minProfit: config_js_1.botConfig.MIN_PROFIT,
-            minProfitMultiplier,
-            meetsThreshold: quoteOutputUsd > minRequiredOutput,
-            potentialProfitUsd: quoteOutputUsd - costBasisUsd,
-            potentialProfitPercent: ((quoteOutputUsd - costBasisUsd) / costBasisUsd) * 100,
-            estimatedPriceImpact: quote.estimatedPriceImpact,
-            grossPrice: quote.grossPrice,
-            netPrice: quote.netPrice,
-            shortfall: quoteOutputUsd > minRequiredOutput ? 0 : minRequiredOutput - quoteOutputUsd,
-        });
-        // 4. Only execute if quote meets profit threshold
-        if (quoteOutputUsd <= minRequiredOutput) {
-            logger_js_1.logger.warn(`[PROFIT CHECK] Sell BLOCKED for position ${position.id}: Quote below profit threshold`, {
-                positionId: position.id,
-                quoteOutputUsd,
-                minRequiredOutput,
-                shortfall: minRequiredOutput - quoteOutputUsd,
-                shortfallPercent: ((minRequiredOutput - quoteOutputUsd) / minRequiredOutput) * 100,
-                reason: 'Quote output does not meet minimum profit requirement',
-            });
-            return; // Skip this sell - protect against slippage and bad quotes
-        }
-        logger_js_1.logger.info(`[PROFIT CHECK] Sell APPROVED for position ${position.id}: Quote meets profit threshold`, {
-            positionId: position.id,
-            quoteOutputUsd,
-            minRequiredOutput,
-            profitAboveThreshold: quoteOutputUsd - minRequiredOutput,
-        });
-        // ============================================================================
-        // Execute the sell (only after profit check passes)
-        // ============================================================================
-        const result = await (0, wallet_js_1.executeSwap)(quote, this.account);
-        if (result.success) {
-            if (moonbagAmount > 0n) {
-                // Update position with remaining moonbag
-                const moonbagBalance = Number(moonbagAmount) / Math.pow(10, tokenDecimals);
-                const updatedPosition = {
-                    ...position,
-                    balance: moonbagBalance,
-                    cost: currentPrice, // Reset cost basis to current price
-                };
-                this.positions = await (0, storage_js_1.savePosition)(this.positions, updatedPosition);
-                (0, logger_js_1.logTrade)('MOONBAG', symbol, {
-                    positionId: position.id,
-                    remainingBalance: moonbagBalance,
-                    newCostBasis: currentPrice,
-                });
+            // Calculate profit using costWeth
+            const costTotal = pos.costWeth * tokensSold;
+            const profitWeth = wethOut - costTotal;
+            // Bank profit if enabled and profitable
+            if (!isStoploss && config_js_1.botConfig.BANK_PROFIT && profitWeth > 0) {
+                const bankAmount = BigInt(Math.floor(profitWeth * 1e18));
+                if (bankAmount > BigInt(Math.floor(config_js_1.botConfig.BANK_MIN_AMOUNT * 1e18))) {
+                    const bankQuote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.wethAddress, config_js_1.tokenConfig.usdgAddress, bankAmount.toString(), undefined, this.account.address);
+                    if (bankQuote) {
+                        await (0, wallet_js_1.executeSwap)(bankQuote, this.account);
+                        logger_js_1.logger.info(`Banked ${profitWeth} WETH profit as USDG`);
+                    }
+                }
+            }
+            // Update position
+            let updated;
+            if (moonbag > 0n) {
+                updated = { ...pos, balance: Number(moonbag) / 1e18, costWeth: price, cost: price };
             }
             else {
-                // Full sell - reset position to empty state
-                const updatedPosition = {
-                    ...position,
-                    balance: 0,
-                    cost: 0,
-                    lastBuyAt: undefined,
-                };
-                this.positions = await (0, storage_js_1.savePosition)(this.positions, updatedPosition);
+                updated = { ...pos, balance: 0, costWeth: 0, cost: 0 };
             }
-            (0, logger_js_1.logTrade)('SELL', symbol, {
-                positionId: position.id,
-                amount: Number(sellAmount) / Math.pow(10, tokenDecimals),
-                price: currentPrice,
-                costBasis: position.cost,
-                actualOutputUsd: quoteOutputUsd,
-                expectedOutputUsd: minRequiredOutput,
-                profit: (((currentPrice - position.cost) / position.cost) * 100).toFixed(2) + '%',
-                txHash: result.txHash,
+            this.positions = await (0, storage_js_1.savePosition)(this.positions, updated);
+            (0, logger_js_1.logTrade)(isStoploss ? 'STOPLOSS' : 'SELL', pos.symbol || config_js_1.tokenConfig.tradingTokenSymbol, {
+                positionId: pos.id, amount: tokensSold, price, profitWeth, txHash: result.txHash
             });
-            logger_js_1.logger.info(`[PROFIT CHECK] Sell EXECUTED for position ${position.id}: ${result.txHash}`, {
-                positionId: position.id,
-                txHash: result.txHash,
-                actualOutputUsd: quoteOutputUsd,
-                minRequiredOutput,
-            });
+            logger_js_1.logger.info(`${isStoploss ? 'Stoploss' : 'Sell'} success: ${result.txHash}`);
         }
         else {
-            logger_js_1.logger.error(`[PROFIT CHECK] Sell execution FAILED for position ${position.id}: ${result.error}`, {
-                positionId: position.id,
-                error: result.error,
-            });
+            logger_js_1.logger.error(`Sell failed: ${result.error}`);
         }
     }
-    /**
-     * Swap USDG to token
-     */
-    async swapUsdToToken(tokenAddress, usdAmount) {
-        const quote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.usdgAddress, tokenAddress, usdAmount.toString(), undefined, this.account.address);
-        if (!quote) {
-            return { success: false, error: 'Failed to get quote' };
-        }
-        return (0, wallet_js_1.executeSwap)(quote, this.account);
-    }
-    /**
-     * Swap token to USDG
-     */
-    async swapTokenToUsd(tokenAddress, tokenAmount) {
-        const quote = await (0, zeroX_js_1.getQuote)(tokenAddress, config_js_1.tokenConfig.usdgAddress, tokenAmount.toString(), undefined, this.account.address);
-        if (!quote) {
-            return { success: false, error: 'Failed to get quote' };
-        }
-        return (0, wallet_js_1.executeSwap)(quote, this.account);
-    }
-    /**
-     * Get current positions
-     */
     getPositions() {
         return { ...this.positions };
     }
-    /**
-     * Get positions as array
-     */
-    getPositionsArray() {
-        return (0, storage_js_1.getPositionsArray)(this.positions);
-    }
-    /**
-     * Check if bot is running
-     */
     isRunning() {
         return this.running;
-    }
-    /**
-     * Generate and save grid positions
-     * Useful for initial setup
-     */
-    async generateGridPositions(basePrice, numGrids, tokenAddress, symbol) {
-        const { generateGridPositions: generateFn } = await import('./storage.js');
-        this.positions = generateFn(basePrice, config_js_1.botConfig.GRID_SIZE_USD, config_js_1.botConfig.GRID_SPACING_PERCENT, numGrids, tokenAddress || config_js_1.tokenConfig.wethAddress, symbol || 'WETH');
-        await (0, storage_js_1.savePositions)(this.positions);
-        logger_js_1.logger.info(`Generated and saved ${numGrids} grid positions`);
     }
 }
 exports.GridBot = GridBot;

@@ -14,10 +14,10 @@ import {
   Account,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { walletConfig } from './config.js';
+import { walletConfig, tokenConfig } from './config.js';
 import { TokenBalance, TradeResult } from './types.js';
 import { logger } from './logger.js';
-import { ZeroXQuote } from './zeroX.js';
+import { ZeroXQuote, getQuote } from './zeroX.js';
 
 // ERC20 ABI for balance and allowance checks
 const erc20Abi = parseAbi([
@@ -300,4 +300,75 @@ export async function waitForTransaction(
   }
 
   return null;
+}
+
+/**
+ * Swap WETH to trading token
+ * Used when buying the trading token with WETH as quote currency
+ */
+export async function swapWethToToken(
+  tokenAddress: string,
+  wethAmount: bigint,
+  account: PrivateKeyAccount
+): Promise<TradeResult> {
+  const quote = await getQuote(
+    tokenConfig.wethAddress, // sell WETH
+    tokenAddress,            // buy trading token
+    wethAmount.toString(),
+    undefined,
+    account.address
+  );
+
+  if (!quote) {
+    return { success: false, error: 'Failed to get WETH->Token quote' };
+  }
+
+  return executeSwap(quote, account);
+}
+
+/**
+ * Swap trading token to WETH
+ * Used when selling the trading token for WETH
+ */
+export async function swapTokenToWeth(
+  tokenAddress: string,
+  tokenAmount: bigint,
+  account: PrivateKeyAccount
+): Promise<TradeResult> {
+  const quote = await getQuote(
+    tokenAddress,            // sell trading token
+    tokenConfig.wethAddress, // buy WETH
+    tokenAmount.toString(),
+    undefined,
+    account.address
+  );
+
+  if (!quote) {
+    return { success: false, error: 'Failed to get Token->WETH quote' };
+  }
+
+  return executeSwap(quote, account);
+}
+
+/**
+ * Swap WETH to USDG (bank profits)
+ * Used to bank profits in USDG
+ */
+export async function swapWethToUsd(
+  wethAmount: bigint,
+  account: PrivateKeyAccount
+): Promise<TradeResult> {
+  const quote = await getQuote(
+    tokenConfig.wethAddress, // sell WETH
+    tokenConfig.usdgAddress, // buy USDG
+    wethAmount.toString(),
+    undefined,
+    account.address
+  );
+
+  if (!quote) {
+    return { success: false, error: 'Failed to get WETH->USDG quote' };
+  }
+
+  return executeSwap(quote, account);
 }

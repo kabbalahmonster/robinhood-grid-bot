@@ -192,7 +192,60 @@ export async function getQuote(
 }
 
 /**
+ * Get token price in WETH terms
+ * Returns how many WETH 1 token is worth
+ */
+export async function getTokenPriceInWeth(
+  tokenAddress: string,
+  wethAddress: string,
+  decimals: number = 18
+): Promise<number | null> {
+  try {
+    // Get price of 1 token in WETH
+    const oneToken = (10n ** BigInt(decimals)).toString();
+    const price = await getPrice(tokenAddress, wethAddress, oneToken);
+    
+    if (!price) return null;
+
+    // buyAmount is how much WETH we get for 1 token
+    const wethPerToken = parseFloat(price.buyAmount) / Math.pow(10, 18);
+    
+    return wethPerToken;
+  } catch (error) {
+    logger.error(`Error getting token price in WETH for ${tokenAddress}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Get WETH price in token terms
+ * Returns how many tokens 1 WETH is worth
+ */
+export async function getWethPriceInToken(
+  tokenAddress: string,
+  wethAddress: string,
+  tokenDecimals: number = 18
+): Promise<number | null> {
+  try {
+    // Get price of 1 WETH in token
+    const oneWeth = (10n ** BigInt(18)).toString();
+    const price = await getPrice(wethAddress, tokenAddress, oneWeth);
+    
+    if (!price) return null;
+
+    // buyAmount is how many tokens we get for 1 WETH
+    const tokensPerWeth = parseFloat(price.buyAmount) / Math.pow(10, tokenDecimals);
+    
+    return tokensPerWeth;
+  } catch (error) {
+    logger.error(`Error getting WETH price in token for ${tokenAddress}:`, error);
+    return null;
+  }
+}
+
+/**
  * Get token price in USD (using WETH as reference)
+ * @deprecated Use getTokenPriceInWeth for the new architecture
  */
 export async function getTokenPriceInUsd(
   tokenAddress: string,

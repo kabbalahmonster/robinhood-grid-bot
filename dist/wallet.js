@@ -9,10 +9,14 @@ exports.checkAndApproveToken = checkAndApproveToken;
 exports.executeSwap = executeSwap;
 exports.getNativeBalance = getNativeBalance;
 exports.waitForTransaction = waitForTransaction;
+exports.swapWethToToken = swapWethToToken;
+exports.swapTokenToWeth = swapTokenToWeth;
+exports.swapWethToUsd = swapWethToUsd;
 const viem_1 = require("viem");
 const accounts_1 = require("viem/accounts");
 const config_js_1 = require("./config.js");
 const logger_js_1 = require("./logger.js");
+const zeroX_js_1 = require("./zeroX.js");
 // ERC20 ABI for balance and allowance checks
 const erc20Abi = (0, viem_1.parseAbi)([
     'function balanceOf(address owner) view returns (uint256)',
@@ -253,5 +257,44 @@ async function waitForTransaction(txHash, timeoutMs = 60000) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     return null;
+}
+/**
+ * Swap WETH to trading token
+ * Used when buying the trading token with WETH as quote currency
+ */
+async function swapWethToToken(tokenAddress, wethAmount, account) {
+    const quote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.wethAddress, // sell WETH
+    tokenAddress, // buy trading token
+    wethAmount.toString(), undefined, account.address);
+    if (!quote) {
+        return { success: false, error: 'Failed to get WETH->Token quote' };
+    }
+    return executeSwap(quote, account);
+}
+/**
+ * Swap trading token to WETH
+ * Used when selling the trading token for WETH
+ */
+async function swapTokenToWeth(tokenAddress, tokenAmount, account) {
+    const quote = await (0, zeroX_js_1.getQuote)(tokenAddress, // sell trading token
+    config_js_1.tokenConfig.wethAddress, // buy WETH
+    tokenAmount.toString(), undefined, account.address);
+    if (!quote) {
+        return { success: false, error: 'Failed to get Token->WETH quote' };
+    }
+    return executeSwap(quote, account);
+}
+/**
+ * Swap WETH to USDG (bank profits)
+ * Used to bank profits in USDG
+ */
+async function swapWethToUsd(wethAmount, account) {
+    const quote = await (0, zeroX_js_1.getQuote)(config_js_1.tokenConfig.wethAddress, // sell WETH
+    config_js_1.tokenConfig.usdgAddress, // buy USDG
+    wethAmount.toString(), undefined, account.address);
+    if (!quote) {
+        return { success: false, error: 'Failed to get WETH->USDG quote' };
+    }
+    return executeSwap(quote, account);
 }
 //# sourceMappingURL=wallet.js.map

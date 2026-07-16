@@ -166,6 +166,7 @@ function generateGridPositions(basePrice, gridSizeUsd, gridSpacingPercent, numGr
             id,
             balance: 0,
             cost: 0,
+            costWeth: 0, // Initialize to 0, set on buy
             buyMin: Math.round(buyMin),
             buyMax: Math.round(buyMax),
             sellMin: Math.round(sellMin),

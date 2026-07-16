@@ -9,7 +9,18 @@ export declare function getPrice(sellToken: string, buyToken: string, sellAmount
  */
 export declare function getQuote(sellToken: string, buyToken: string, sellAmount?: string, buyAmount?: string, takerAddress?: string): Promise<ZeroXQuote | null>;
 /**
+ * Get token price in WETH terms
+ * Returns how many WETH 1 token is worth
+ */
+export declare function getTokenPriceInWeth(tokenAddress: string, wethAddress: string, decimals?: number): Promise<number | null>;
+/**
+ * Get WETH price in token terms
+ * Returns how many tokens 1 WETH is worth
+ */
+export declare function getWethPriceInToken(tokenAddress: string, wethAddress: string, tokenDecimals?: number): Promise<number | null>;
+/**
  * Get token price in USD (using WETH as reference)
+ * @deprecated Use getTokenPriceInWeth for the new architecture
  */
 export declare function getTokenPriceInUsd(tokenAddress: string, wethAddress: string, decimals?: number): Promise<number | null>;
 /**

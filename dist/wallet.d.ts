@@ -37,4 +37,19 @@ export declare function getNativeBalance(address: string): Promise<TokenBalance>
  * Wait for transaction receipt with timeout
  */
 export declare function waitForTransaction(txHash: Hex, timeoutMs?: number): Promise<TransactionReceipt | null>;
+/**
+ * Swap WETH to trading token
+ * Used when buying the trading token with WETH as quote currency
+ */
+export declare function swapWethToToken(tokenAddress: string, wethAmount: bigint, account: PrivateKeyAccount): Promise<TradeResult>;
+/**
+ * Swap trading token to WETH
+ * Used when selling the trading token for WETH
+ */
+export declare function swapTokenToWeth(tokenAddress: string, tokenAmount: bigint, account: PrivateKeyAccount): Promise<TradeResult>;
+/**
+ * Swap WETH to USDG (bank profits)
+ * Used to bank profits in USDG
+ */
+export declare function swapWethToUsd(wethAmount: bigint, account: PrivateKeyAccount): Promise<TradeResult>;
 //# sourceMappingURL=wallet.d.ts.map

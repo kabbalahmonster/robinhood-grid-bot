@@ -5,6 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPrice = getPrice;
 exports.getQuote = getQuote;
+exports.getTokenPriceInWeth = getTokenPriceInWeth;
+exports.getWethPriceInToken = getWethPriceInToken;
 exports.getTokenPriceInUsd = getTokenPriceInUsd;
 exports.calculateUsdValue = calculateUsdValue;
 const axios_1 = __importDefault(require("axios"));
@@ -151,7 +153,48 @@ async function getQuote(sellToken, buyToken, sellAmount, buyAmount, takerAddress
     }
 }
 /**
+ * Get token price in WETH terms
+ * Returns how many WETH 1 token is worth
+ */
+async function getTokenPriceInWeth(tokenAddress, wethAddress, decimals = 18) {
+    try {
+        // Get price of 1 token in WETH
+        const oneToken = (10n ** BigInt(decimals)).toString();
+        const price = await getPrice(tokenAddress, wethAddress, oneToken);
+        if (!price)
+            return null;
+        // buyAmount is how much WETH we get for 1 token
+        const wethPerToken = parseFloat(price.buyAmount) / Math.pow(10, 18);
+        return wethPerToken;
+    }
+    catch (error) {
+        logger_js_1.logger.error(`Error getting token price in WETH for ${tokenAddress}:`, error);
+        return null;
+    }
+}
+/**
+ * Get WETH price in token terms
+ * Returns how many tokens 1 WETH is worth
+ */
+async function getWethPriceInToken(tokenAddress, wethAddress, tokenDecimals = 18) {
+    try {
+        // Get price of 1 WETH in token
+        const oneWeth = (10n ** BigInt(18)).toString();
+        const price = await getPrice(wethAddress, tokenAddress, oneWeth);
+        if (!price)
+            return null;
+        // buyAmount is how many tokens we get for 1 WETH
+        const tokensPerWeth = parseFloat(price.buyAmount) / Math.pow(10, tokenDecimals);
+        return tokensPerWeth;
+    }
+    catch (error) {
+        logger_js_1.logger.error(`Error getting WETH price in token for ${tokenAddress}:`, error);
+        return null;
+    }
+}
+/**
  * Get token price in USD (using WETH as reference)
+ * @deprecated Use getTokenPriceInWeth for the new architecture
  */
 async function getTokenPriceInUsd(tokenAddress, wethAddress, decimals = 18) {
     try {

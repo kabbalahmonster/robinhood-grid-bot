@@ -1,20 +1,27 @@
 /**
  * Position structure for grid trading
+ * 
+ * NEW ARCHITECTURE (WETH as quote currency):
+ * - costWeth: Cost basis in WETH terms (primary for profit calculation)
+ * - cost: Cost basis in USD terms (for reference)
+ * - All grid levels (buyMin, buyMax, sellMin, stoploss) are in WETH terms
  */
 export interface Position {
   /** Unique position ID */
   id: string;
   /** Token balance in the position (0 if empty) */
   balance: number;
-  /** Average cost basis for the position */
+  /** Average cost basis in WETH (for profit calculation with WETH as quote) */
+  costWeth: number;
+  /** Average cost basis for the position (in USD or token terms, for reference) */
   cost: number;
-  /** Minimum price to buy (lower bound) */
+  /** Minimum price to buy (lower bound) - in WETH */
   buyMin: number;
-  /** Maximum price to buy (upper bound) */
+  /** Maximum price to buy (upper bound) - in WETH */
   buyMax: number;
-  /** Minimum price to sell (profit target) */
+  /** Minimum price to sell (profit target) - in WETH */
   sellMin: number;
-  /** Stop loss price */
+  /** Stop loss price - in WETH */
   stoploss: number;
   /** Token address */
   tokenAddress?: string;
